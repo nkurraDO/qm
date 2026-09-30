@@ -77,3 +77,24 @@ test("a swarm owner without the flag gets no reconciliation", async () => {
   assert.equal((await fixture.records.get(swarm.board!.sandboxId)) ?? null, null);
   assert.equal(await service.enabledFor("alice"), false);
 });
+
+test("pausing and stopping the root's direct children cascades across a 120-worker swarm", async () => {
+  const fixture = await swarmFixture();
+  const workers = await fixture.service.spawn(fixture.caller, {
+    requestId: "wide",
+    text: "Work",
+    count: 120,
+    settings: { agents: 128 },
+  });
+  assert.equal(workers.length, 120);
+  const children = workers.filter((worker) => worker.parentId === fixture.root.id);
+  await Promise.all(children.map((w) => fixture.service.control(fixture.caller, { memberId: w.id, state: "paused" })));
+  await fixture.service.sweep();
+  let swarm = (await fixture.store.get(fixture.root.id))!;
+  assert.ok(workers.every((w) => swarm.messages[0]!.notifications[w.id]?.state !== "queued"));
+  await Promise.all(children.map((w) => fixture.service.control(fixture.caller, { memberId: w.id, state: "stopped" })));
+  await fixture.service.sweep();
+  swarm = (await fixture.store.get(fixture.root.id))!;
+  assert.ok(workers.every((w) => swarm.messages[0]!.notifications[w.id]?.state !== "queued"));
+  assert.equal((await fixture.service.inspect(fixture.caller)).peers.length, 121);
+});

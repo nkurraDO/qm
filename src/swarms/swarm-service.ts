@@ -111,12 +111,23 @@ function jsonContext(value: unknown, max: number): unknown {
 
 type SwarmControlState = "active" | "paused" | "stopped";
 
+const memberIndex = new WeakMap<SwarmMember[], Map<string, SwarmMember>>();
+
+function memberById(swarm: Swarm, id: string): SwarmMember | undefined {
+  let index = memberIndex.get(swarm.members);
+  if (!index || index.size !== swarm.members.length) {
+    index = new Map(swarm.members.map((member) => [member.id, member]));
+    memberIndex.set(swarm.members, index);
+  }
+  return index.get(id);
+}
+
 function controlState(swarm: Swarm, memberId: string): SwarmControlState {
   let state: SwarmControlState = "active";
   const seen = new Set<string>();
   for (let id: string | undefined = memberId; id && !seen.has(id);) {
     seen.add(id);
-    const member = swarm.members.find((peer) => peer.id === id);
+    const member = memberById(swarm, id);
     if (member?.control === "stopped") return "stopped";
     if (member?.control === "paused") state = "paused";
     id = member?.parentId;
@@ -358,7 +369,7 @@ export function createSwarmService(deps: {
     for (const message of swarm.messages) {
       for (const [recipientId, notification] of Object.entries(message.notifications)) {
         if (notification.state !== "pending") continue;
-        const recipient = swarm.members.find((member) => member.id === recipientId);
+        const recipient = memberById(swarm, recipientId);
         if (!recipient || recipient.state === "reserved") continue;
         const control = controlState(swarm, recipient.id);
         if (control === "paused") continue;
@@ -687,14 +698,17 @@ export function createSwarmService(deps: {
         if (previous.signature !== fingerprint) throw new Error("requestId reused with different content");
         return swarm.messages.find((message) => message.id === previous.messageId)!;
       }
-      const eligible: SwarmMember[] = [];
-      for (const member of swarm.members) {
-        if (member.state !== "ready" || !member.sessionId) continue;
-        const session = await sessions.get(member.sessionId);
-        const participants = await sessions.participantsOf(member.sessionId);
-        if (session?.scopeId === swarm.scopeId && rosterMatches(participants, swarm.participants))
-          eligible.push(member);
-      }
+      const checked = await Promise.all(
+        swarm.members.map(async (member) => {
+          if (member.state !== "ready" || !member.sessionId) return false;
+          const [session, participants] = await Promise.all([
+            sessions.get(member.sessionId),
+            sessions.participantsOf(member.sessionId),
+          ]);
+          return session?.scopeId === swarm.scopeId && rosterMatches(participants, swarm.participants);
+        }),
+      );
+      const eligible = swarm.members.filter((_, index) => checked[index]);
       const audience = resolveAudience(input.audience, eligible);
       const id = randomUUID();
       const updated = await update(auth, (swarm) => {
@@ -776,11 +790,13 @@ export function createSwarmService(deps: {
         const runIds = updated.messages.flatMap((message) =>
           Object.entries(message.notifications).flatMap(([id, n]) => (stopped.has(id) && n.runId ? [n.runId] : [])),
         );
-        for (const runId of runIds) {
-          if (await runs.withdraw(runId, { unstartedOnly: true }).catch(() => false)) continue;
-          const run = await runs.get(runId);
-          if (run?.status === "running") await deps.signals?.send(runId, { kind: "abort" }).catch(() => false);
-        }
+        await Promise.all(
+          runIds.map(async (runId) => {
+            if (await runs.withdraw(runId, { unstartedOnly: true }).catch(() => false)) return;
+            const run = await runs.get(runId);
+            if (run?.status === "running") await deps.signals?.send(runId, { kind: "abort" }).catch(() => false);
+          }),
+        );
       }
       return view(updated.members.find((member) => member.id === target.id)!);
     },

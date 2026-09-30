@@ -3413,6 +3413,11 @@ qm-markdown .tok-in {
   max-height: 42vh;
   overflow-y: auto;
 }
+.swarm-bulk {
+  display: flex;
+  gap: 6px;
+}
+
 .bg-panel-note {
   padding: 6px 8px;
   font-size: 12px;

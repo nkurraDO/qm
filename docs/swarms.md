@@ -212,14 +212,18 @@ Controls apply to descendants too. Pausing holds new notifications as pending
 until the worker is resumed; runs already queued continue. Stopping is terminal:
 pending notifications fail, unstarted queued runs are withdrawn, running turns are
 aborted, and later turns in that worker session are refused. `inspect` reports each
-peer's `control`. The web UI shows a Swarm strip on swarm sessions with Pause,
-Resume, and Stop buttons that call this action.
+peer's `control`. The web UI shows a Swarm strip on swarm sessions: a collapsed summary of
+active, starting, paused, stopped, and failed workers; when expanded, workers
+grouped under their parent (20 per group, with "show more"); per-worker Pause,
+Resume, and Stop; and Pause all, Resume all, and Stop all (with a confirm), which
+apply this action to the root's direct children so it cascades. The strip
+refreshes every few seconds only while workers are active and the tab is visible.
 
 ## Defaults and safety bounds
 
 | Setting                                          | Default              | Maximum     |
 | ------------------------------------------------ | -------------------- | ----------- |
-| `agents` (root and failed reservations included) | 32                   | 64          |
+| `agents` (root and failed reservations included) | 32                   | 256         |
 | `depth` below root                               | 4                    | 8           |
 | `spawnRequests`                                  | 32                   | 64          |
 | `messages` including initial work                | 128                  | 256         |
