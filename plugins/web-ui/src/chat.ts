@@ -197,6 +197,7 @@ import {
   type PeekLine,
   type SubagentRow,
 } from "./subagent-activity";
+import { createSwarmStrip } from "./swarm-strip.ts";
 import { newChatDraftKey, saveDraft, storedDraft } from "./drafts";
 import { createForkOriginController, forkOriginView } from "./fork-origin";
 import { base64ToBytes } from "./paste-text";
@@ -1532,7 +1533,7 @@ export function createChatSurface(
         busy: agent.state.isStreaming,
         showPrompts: !messages.length,
         toolbar: html`${goalStrip(agent)} ${ctx.composer.queuedStrip(agent)} ${subagentStrip()}
-        ${backgroundActivityStrip()}`,
+        ${swarmUi.strip(chatState.sessionId)} ${backgroundActivityStrip()}`,
         composer: ctx.composer.composerForm(agent),
         onPrompt: (prompt) => ctx.composer.fillSuggestedPrompt(prompt, agent),
         onDragEnter: (event) => ctx.composer.onDragEnter(event),
@@ -1577,8 +1578,9 @@ export function createChatSurface(
             </div>
           </section>
           <div class="chat-bottom-dock">
-            ${goalStrip(agent)} ${ctx.composer.queuedStrip(agent)} ${subagentStrip()} ${backgroundActivityStrip()}
-            ${ctx.composer.composerForm(agent)} ${ctx.pane ? nothing : suggestions}
+            ${goalStrip(agent)} ${ctx.composer.queuedStrip(agent)} ${subagentStrip()}
+            ${swarmUi.strip(chatState.sessionId)} ${backgroundActivityStrip()} ${ctx.composer.composerForm(agent)}
+            ${ctx.pane ? nothing : suggestions}
           </div>
         </div>
       `;
@@ -2444,6 +2446,7 @@ export function createChatSurface(
     `;
   }
 
+  const swarmUi = createSwarmStrip(() => drawActiveChat());
   const SUBAGENT_ACK_KEY = "qm.subagentAck";
   const subagentUi = {
     expanded: false,

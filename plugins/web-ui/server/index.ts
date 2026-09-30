@@ -1944,6 +1944,21 @@ const apiRoutes: readonly WebRoute[] = [
   },
   {
     method: "GET",
+    path: "/api/sessions/:id/swarm",
+    handle: async (c) => relayCore(c.res, "GET", `/v1/sessions/${encodeURIComponent(c.params.id!)}/swarm`),
+  },
+  {
+    method: "POST",
+    path: "/api/sessions/:id/swarm",
+    handle: async (c) => {
+      const body = await readJson<{ action?: unknown }>(c.req, c.res, false);
+      if (!body) return;
+      if (body.action !== "control") return json(c.res, 400, { error: "only swarm controls are available here" });
+      return relayCore(c.res, "POST", `/v1/sessions/${encodeURIComponent(c.params.id!)}/swarm`, JSON.stringify(body));
+    },
+  },
+  {
+    method: "GET",
     path: "/api/sessions/:id/approvals",
     handle: async (c) => {
       const { res, user } = c;
