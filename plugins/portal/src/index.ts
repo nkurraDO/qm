@@ -1069,14 +1069,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
     }
     const signedOutSession = currentSession(req);
-    const logoutOidc =
-      !signedOutSession?.anon && signedOutSession?.oidcIssuer
-        ? trustedOidc?.issuer === signedOutSession.oidcIssuer
-          ? trustedOidc
-          : !AUTH_BROKER_UPSTREAM && OIDC.issuer === signedOutSession.oidcIssuer
-            ? OIDC
-            : null
-        : null;
+    let logoutOidc: OidcConfig | null = null;
+    if (!signedOutSession?.anon && signedOutSession?.oidcIssuer) {
+      if (trustedOidc?.issuer === signedOutSession.oidcIssuer) logoutOidc = trustedOidc;
+      else if (!AUTH_BROKER_UPSTREAM && OIDC.issuer === signedOutSession.oidcIssuer) logoutOidc = OIDC;
+    }
     const redirectTo = logoutOidc ? ((await endSessionUrl(logoutOidc)) ?? "/auth/signed-out") : "/";
     setSession(res, [
       ...(signedOutSession ? loginProviderCookie(signedOutSession.sub) : []),
