@@ -2,7 +2,7 @@ import type { ExternalSlackPolicies } from "./resolution/external-slack.ts";
 import { isStrongSigningSecret } from "./auth/source-auth.ts";
 import { parseSandboxCapabilityTtlMs } from "./auth/capability-token.ts";
 import { parseScopeId } from "./types.ts";
-import type { SandboxScopeDefaults } from "./sandbox/sandbox-routing.ts";
+import type { SandboxBackendName, SandboxScopeDefaults } from "./sandbox/sandbox-routing.ts";
 import { existsSync, readdirSync } from "node:fs";
 import {
   parseProviderBaseUrl,
@@ -74,9 +74,8 @@ export interface Config {
   sandboxResourcesEnabled: boolean;
   sharingPosture: SharingPosture;
   sandboxScopeDefaults?: SandboxScopeDefaults;
-  sandboxBackend: "aws" | "local" | "sprites" | "smolmachines" | "e2b" | "modal" | "porter" | "agent37" | "superserve";
-  sandboxSecondaryBackend?:
-    "aws" | "local" | "sprites" | "smolmachines" | "e2b" | "modal" | "porter" | "agent37" | "superserve";
+  sandboxBackend: SandboxBackendName;
+  sandboxSecondaryBackend?: SandboxBackendName;
   deployProvider: "docker" | "aws" | "fly" | "porter";
   egressServiceHosts?: string[];
   brandingDefault?: OrgBranding;
@@ -208,6 +207,7 @@ export interface Config {
   agent37Sandbox: Agent37SandboxEnv;
   superserveSandbox: SuperserveSandboxEnv;
   e2bSandbox: E2bSandboxEnv;
+  marsSandbox: MarsSandboxEnv;
   modalSandbox: ModalSandboxEnv;
   porterSandbox: PorterSandboxEnv;
   porterDeploy: PorterDeployEnv;
@@ -427,6 +427,40 @@ function e2bSandboxEnv(env: NodeJS.ProcessEnv): E2bSandboxEnv {
             env.E2B_NATIVE_SNAPSHOT_INTERVAL_SEC,
           ),
         }
+      : {}),
+    ...(numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) !== undefined
+      ? { defaultTimeoutSec: numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) }
+      : {}),
+  };
+}
+
+interface MarsSandboxEnv {
+  apiToken?: string;
+  apiBaseUrl?: string;
+  template?: string;
+  namePrefix?: string;
+  sizeSlug?: string;
+  idleTimeoutSec?: number;
+  egressProxyUrl?: string;
+  snapshotS3Bucket?: string;
+  snapshotIntervalSec?: number;
+  defaultTimeoutSec?: number;
+}
+
+function marsSandboxEnv(env: NodeJS.ProcessEnv): MarsSandboxEnv {
+  return {
+    ...(env.MARS_API_TOKEN ? { apiToken: env.MARS_API_TOKEN } : {}),
+    ...(env.MARS_API_BASE_URL ? { apiBaseUrl: env.MARS_API_BASE_URL } : {}),
+    ...(env.MARS_TEMPLATE ? { template: env.MARS_TEMPLATE } : {}),
+    ...(env.MARS_NAME_PREFIX ? { namePrefix: env.MARS_NAME_PREFIX } : {}),
+    ...(env.MARS_SIZE_SLUG ? { sizeSlug: env.MARS_SIZE_SLUG } : {}),
+    ...(numEnvStrict("MARS_IDLE_TIMEOUT_SEC", env.MARS_IDLE_TIMEOUT_SEC) !== undefined
+      ? { idleTimeoutSec: numEnvStrict("MARS_IDLE_TIMEOUT_SEC", env.MARS_IDLE_TIMEOUT_SEC) }
+      : {}),
+    ...(env.MARS_EGRESS_PROXY_URL ? { egressProxyUrl: env.MARS_EGRESS_PROXY_URL } : {}),
+    ...(env.MARS_SNAPSHOT_S3_BUCKET ? { snapshotS3Bucket: env.MARS_SNAPSHOT_S3_BUCKET } : {}),
+    ...(numEnvStrict("MARS_SNAPSHOT_INTERVAL_SEC", env.MARS_SNAPSHOT_INTERVAL_SEC) !== undefined
+      ? { snapshotIntervalSec: numEnvStrict("MARS_SNAPSHOT_INTERVAL_SEC", env.MARS_SNAPSHOT_INTERVAL_SEC) }
       : {}),
     ...(numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) !== undefined
       ? { defaultTimeoutSec: numEnvStrict("SANDBOX_TIMEOUT_SEC", env.SANDBOX_TIMEOUT_SEC) }
@@ -1002,6 +1036,7 @@ export function enabledSandboxBackends(config: Config): Array<Config["sandboxBac
     agent37: Boolean(config.agent37Sandbox?.apiKey),
     superserve: Boolean(config.superserveSandbox?.apiKey && config.superserveSandbox?.template),
     e2b: Boolean(config.e2bSandbox?.apiKey),
+    mars: Boolean(config.marsSandbox?.apiToken),
     modal: Boolean(config.modalSandbox?.tokenId && config.modalSandbox?.tokenSecret),
     aws: Boolean(config.awsSandbox?.s3Bucket),
     porter: Boolean(config.porterSandbox?.token),
@@ -1025,11 +1060,12 @@ function sandboxBackendEnvStrict(value: string | undefined, name = "SANDBOX_BACK
     backend === "modal" ||
     backend === "agent37" ||
     backend === "superserve" ||
+    backend === "mars" ||
     backend === "porter"
   )
     return backend;
   throw new Error(
-    `${name}=${JSON.stringify(value)} is not recognized — use aws, local, sprites, smolmachines, e2b, modal, porter, agent37, or superserve, or unset it.`,
+    `${name}=${JSON.stringify(value)} is not recognized — use aws, local, sprites, smolmachines, e2b, modal, porter, agent37, superserve, or mars, or unset it.`,
   );
 }
 
@@ -1226,6 +1262,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       "[config] SANDBOX_BACKEND=e2b without E2B_EGRESS_PROXY_URL — sandboxes run with NO egress enforcement (fail-open); set E2B_EGRESS_PROXY_URL to the public egress proxy so E2B's network rules admit only that host.",
     );
   }
+  if (env.SANDBOX_BACKEND === "mars" && !env.MARS_EGRESS_PROXY_URL) {
+    console.warn(
+      "[config] SANDBOX_BACKEND=mars without MARS_EGRESS_PROXY_URL — sandboxes run with NO egress enforcement (fail-open); set MARS_EGRESS_PROXY_URL to the public egress proxy so the session's egress allowlist admits only that host.",
+    );
+  }
+  if (env.MARS_API_TOKEN && !env.MARS_SNAPSHOT_S3_BUCKET) {
+    console.warn(
+      "[config] mars sandbox backend enabled without MARS_SNAPSHOT_S3_BUCKET — pause preserves the microVM, but a destroyed session takes the home with it; set MARS_SNAPSHOT_S3_BUCKET so a replacement session can hydrate from a portable snapshot.",
+    );
+  }
   if (env.MODAL_TOKEN_ID && env.MODAL_TOKEN_SECRET && !env.MODAL_EGRESS_PROXY_URL) {
     console.warn(
       "[config] modal sandbox backend enabled without MODAL_EGRESS_PROXY_URL — sandboxes run with NO egress enforcement (fail-open); set MODAL_EGRESS_PROXY_URL to the public https egress proxy so Modal's outbound allowlist admits only that host.",
@@ -1265,7 +1311,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (env.NODE_ENV === "production" && !env.SANDBOX_BACKEND?.trim()) {
     throw new Error(
-      "SANDBOX_BACKEND must be set explicitly in production — use sprites, smolmachines, e2b, modal, porter, agent37, superserve, aws, or local.",
+      "SANDBOX_BACKEND must be set explicitly in production — use sprites, smolmachines, e2b, modal, porter, agent37, superserve, mars, aws, or local.",
     );
   }
   const sandboxBackend = sandboxBackendEnvStrict(env.SANDBOX_BACKEND);
@@ -1669,6 +1715,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     porterSandbox: porterSandboxEnv(env),
     porterDeploy: porterDeployEnv(env),
     e2bSandbox: e2bSandboxEnv(env),
+    marsSandbox: marsSandboxEnv(env),
     modalSandbox: modalSandboxEnv(env),
     awsDeploy: {
       ...awsDeployEnv(env),

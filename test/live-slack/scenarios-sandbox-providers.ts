@@ -14,6 +14,7 @@ const providerCoverage: Record<SandboxBackendName, true> = {
   porter: true,
   agent37: true,
   superserve: true,
+  mars: true,
 };
 
 export const sandboxProviders = Object.keys(providerCoverage) as SandboxBackendName[];

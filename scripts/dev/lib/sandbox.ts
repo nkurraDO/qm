@@ -190,6 +190,43 @@ export async function resolveSandbox(opts: {
     return { backend: "superserve", env, detail: `Superserve (template ${template})`, publicApiUrl: apiUrl, warnings };
   }
 
+  if (backend === "mars") {
+    const marsToken = opts.baseEnv.MARS_API_TOKEN?.trim();
+    if (!marsToken)
+      throw new Error(
+        "--sandbox mars requires MARS_API_TOKEN in the environment (a DigitalOcean API token for a team with MARS access)",
+      );
+    let marsApiUrl = opts.baseEnv.PUBLIC_API_URL || null;
+    if (!marsApiUrl) {
+      marsApiUrl = await startQuickTunnel(opts.corePort, opts.lock, opts.log);
+      if (!marsApiUrl)
+        warnings.push(
+          "cloudflared tunnel didn't come up -- agent self-API (crons/sends) won't be reachable from the sandbox",
+        );
+    }
+    const env: Record<string, string> = {
+      SANDBOX_BACKEND: "mars",
+      MARS_API_TOKEN: marsToken,
+      MARS_NAME_PREFIX: opts.baseEnv.MARS_NAME_PREFIX || "qmdev",
+    };
+    if (opts.baseEnv.MARS_API_BASE_URL) env.MARS_API_BASE_URL = opts.baseEnv.MARS_API_BASE_URL;
+    if (opts.baseEnv.MARS_TEMPLATE) env.MARS_TEMPLATE = opts.baseEnv.MARS_TEMPLATE;
+    if (opts.baseEnv.MARS_SIZE_SLUG) env.MARS_SIZE_SLUG = opts.baseEnv.MARS_SIZE_SLUG;
+    if (opts.baseEnv.MARS_EGRESS_PROXY_URL) env.MARS_EGRESS_PROXY_URL = opts.baseEnv.MARS_EGRESS_PROXY_URL;
+    else
+      warnings.push(
+        "MARS_EGRESS_PROXY_URL unset -- mars sandbox runs with NO egress enforcement; set it to QA the forced-proxy path",
+      );
+    if (marsApiUrl) env.PUBLIC_API_URL = marsApiUrl;
+    return {
+      backend: "mars",
+      env,
+      detail: `MARS (${opts.baseEnv.MARS_API_BASE_URL || "api.digitalocean.com"})`,
+      publicApiUrl: marsApiUrl,
+      warnings,
+    };
+  }
+
   if (backend === "porter") {
     const porterToken = opts.baseEnv.PORTER_DEPLOY_API_TOKEN;
     const projectId = opts.baseEnv.PORTER_DEPLOY_PROJECT_ID;

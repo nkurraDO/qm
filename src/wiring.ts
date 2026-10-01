@@ -231,6 +231,8 @@ import {
 import { createSdkSuperserveClient } from "./sandbox/superserve-client.ts";
 import { createE2bSandbox, type StoredE2bSandbox } from "./sandbox/e2b-sandbox.ts";
 import { createSdkE2bClient } from "./sandbox/e2b-client.ts";
+import { createMarsSandbox, type StoredMarsSandbox } from "./sandbox/mars-sandbox.ts";
+import { createSdkMarsClient } from "./sandbox/mars-client.ts";
 import { createS3SnapshotStore } from "./sandbox/home-snapshot.ts";
 import { createModalSandbox, type StoredModalSandbox } from "./sandbox/modal-sandbox.ts";
 import { createSdkModalClient } from "./sandbox/modal-client.ts";
@@ -937,6 +939,37 @@ export function buildApp(
       onError: sandboxOnError,
     });
   };
+  const marsBodies = artifactMap<StoredMarsSandbox>("mars_sandbox_bodies");
+  const buildMars = (): Sandbox => {
+    const mars = config.marsSandbox;
+    if (!mars.apiToken) throw new Error("SANDBOX_BACKEND=mars requires MARS_API_TOKEN");
+    return createMarsSandbox(workspace, {
+      client: createSdkMarsClient({
+        apiToken: mars.apiToken,
+        ...(mars.apiBaseUrl ? { apiBaseUrl: mars.apiBaseUrl } : {}),
+        ...(mars.template ? { template: mars.template } : {}),
+        ...(mars.sizeSlug ? { sizeSlug: mars.sizeSlug } : {}),
+        ...(mars.idleTimeoutSec ? { idleTimeoutSec: mars.idleTimeoutSec } : {}),
+        ...(mars.egressProxyUrl ? { egressProxyUrl: mars.egressProxyUrl } : {}),
+      }),
+      ...(mars.namePrefix ? { namePrefix: mars.namePrefix } : {}),
+      ...(mars.defaultTimeoutSec ? { defaultTimeoutSec: mars.defaultTimeoutSec } : {}),
+      ...(mars.snapshotIntervalSec !== undefined ? { snapshotIntervalMs: mars.snapshotIntervalSec * 1000 } : {}),
+      ...(mars.egressProxyUrl ? { egressProxyUrl: mars.egressProxyUrl } : {}),
+      extraTools: deploymentLayer.advertisedTools,
+      credentialPaths: deploymentLayer.credentialPaths,
+      layerToolFiles: () => deploymentLayer.installFiles,
+      blobTransfer,
+      ...(config.signingSecret ? { signingSecret: config.signingSecret } : {}),
+      ...(config.capabilitySecret ? { capabilitySecret: config.capabilitySecret } : {}),
+      ...(config.apiBaseUrl ? { apiBaseUrl: config.apiBaseUrl } : {}),
+      store: marsBodies,
+      ...(mars.snapshotS3Bucket
+        ? { snapshots: createS3SnapshotStore({ bucket: mars.snapshotS3Bucket, prefix: "mars-home" }) }
+        : {}),
+      onError: sandboxOnError,
+    });
+  };
   const buildModal = (): Sandbox => {
     const modal = config.modalSandbox;
     if (!modal.tokenId || !modal.tokenSecret)
@@ -1086,6 +1119,7 @@ export function buildApp(
     porter: buildPorter,
     agent37: buildAgent37,
     superserve: buildSuperserve,
+    mars: buildMars,
   };
   const enabledBackends = new Set(enabledSandboxBackends(config));
   const sandboxBackends: Partial<Record<SandboxBackendName, Sandbox>> = {
@@ -1103,13 +1137,15 @@ export function buildApp(
     rollout: artifactMap<SandboxResourceRollout>("sandbox_resource_rollout"),
     legacyScopes: async () => (await sessions.distinctScopes()).map((scope) => scope.scopeId),
     legacySandboxes: async () => {
-      const [e2b, modal, aws, superserve] = await Promise.all([
+      const [e2b, modal, aws, superserve, mars] = await Promise.all([
         e2bBodies.entries(),
         modalBodies.entries(),
         awsBodies.entries(),
         superserveBodies.entries(),
+        marsBodies.entries(),
       ]);
       return [
+        ...mars.map(([scopeId, body]) => ({ scopeId, backend: "mars" as const, machineId: body.sandboxId })),
         ...e2b.map(([scopeId, body]) => ({ scopeId, backend: "e2b" as const, machineId: body.sandboxId })),
         ...modal.map(([scopeId, body]) => ({ scopeId, backend: "modal" as const, machineId: body.sandboxId })),
         ...aws.map(([scopeId, body]) => ({ scopeId, backend: "aws" as const, machineId: body.microvmId })),
