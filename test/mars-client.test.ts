@@ -50,14 +50,20 @@ test("the port-forward url targets sandbox-agent over wss", () => {
   assert.throws(() => tunnelUrl("ftp://example.com", "s", 8443), /must be http/);
 });
 
-test("the manifest pins a template and pre-allows bash so MARS never gates a command", () => {
+test("the manifest names an agent, pins a template, and pre-allows bash so MARS never gates a command", () => {
   const yaml = marsManifest({ name: "qm-personal-tester", template: "base" });
   assert.match(yaml, /^name: "qm-personal-tester"$/m);
+  assert.match(yaml, /^agent: "codex"$/m);
   assert.match(yaml, /^template: "base"$/m);
   assert.match(yaml, /^persistent_workspace: true$/m);
   assert.match(yaml, /tool: bash/);
   assert.match(yaml, /action: allow/);
-  assert.doesNotMatch(yaml, /^agent:/m, "an explicit template is what bypasses the agent-kind gate");
+});
+
+test("the manifest omits the template so MARS derives it from the agent", () => {
+  const yaml = marsManifest({ name: "n", template: "" });
+  assert.match(yaml, /^agent: "codex"$/m);
+  assert.doesNotMatch(yaml, /^template:/m);
 });
 
 test("the manifest carries size, idle timeout and the egress allowlist only when configured", () => {

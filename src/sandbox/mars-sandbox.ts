@@ -53,7 +53,8 @@ import type {
   TeardownOptions,
 } from "./sandbox.ts";
 
-const HOME_DIR = "/workspace/home";
+export const MARS_HOME_DIR = "/workspace/home";
+const HOME_DIR = MARS_HOME_DIR;
 const WORKSPACE_BASENAME = "workspace";
 const RO_LAYERS_TAR = ".ro-layers.tar";
 const RO_LAYERS_MANIFEST = ".ro-layers.manifest";

@@ -41,6 +41,7 @@
     "smoke:aws-sandbox": "node scripts/aws-sandbox-smoke.ts",
     "smoke:local-sandbox": "node scripts/local-sandbox-smoke.ts",
     "smoke:mars-sandbox": "node --env-file-if-exists=.env scripts/mars-sandbox-smoke.ts",
+    "smoke:mars-turn": "node --env-file-if-exists=.env scripts/mars-turn-smoke.ts",
     "build:modal-image": "node scripts/modal-build-image.ts",
     "build:e2b-template": "node scripts/e2b-build-template.ts",
     "build:aws-image": "node scripts/aws-build-sandbox-image.ts",

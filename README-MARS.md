@@ -114,7 +114,7 @@ output that could only have come from the guest. Needs a running QM core and its
 CORE_URL=http://localhost:8081 \
 CORE_SIGNING_SECRET=... \
 PORTAL_IDENTITY_SECRET=... \
-node scripts/mars-turn-smoke.ts
+npm run smoke:mars-turn
 ```
 
 For local development, `dev-instance` understands the backend:
