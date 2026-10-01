@@ -3130,7 +3130,7 @@ test("AWS candidate deploy fails closed on account, repository, or missing-workl
       () => awsUp(oneServiceConfig(), dir, { dryRun: true, candidate: candidatePath }),
       /invalid core image/,
     );
-    writeFileSync(candidatePath, JSON.stringify({ ...base, images: {}, imageProvenance: {} }));
+    writeFileSync(candidatePath, JSON.stringify({ ...base, images: {}, imageProvenance: {}, architectures: {} }));
     await assert.rejects(
       () => awsUp(oneServiceConfig(), dir, { dryRun: true, candidate: candidatePath }),
       /does not contain core/,
