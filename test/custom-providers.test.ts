@@ -228,7 +228,7 @@ for (const field of ["contextWindow", "maxTokens"] as const) {
 for (const protocol of ["openai", "openai-responses", "anthropic"] as const) {
   for (const reasoning of [undefined, false, true]) {
     test(`custom ${protocol} reasoning=${reasoning} survives persistence and runtime mappings`, async () => {
-      const spec = { ...GATEWAY, protocol, models: [{ ...GATEWAY.models[0], reasoning }] };
+      const spec = { ...GATEWAY, protocol, models: [{ ...GATEWAY.models[0]!, reasoning }] };
       const backing = createMemoryMap<StoredCustomProvider>();
       const store = createCustomProviderStore({ backing, keyMaterial: "reasoning-test" });
       await store.upsert(spec, "local", "admin@example.com");
@@ -239,9 +239,9 @@ for (const protocol of ["openai", "openai-responses", "anthropic"] as const) {
       const json = customModelsJson() as {
         providers: Record<string, { models: Array<{ reasoning: boolean; cost: typeof model.cost }> }>;
       };
-      assert.equal(json.providers[spec.id].models[0].reasoning, reasoning ?? false);
-      assert.deepEqual(json.providers[spec.id].models[0].cost, model.cost);
-      assert.deepEqual((await reloaded.statuses())[0].models, spec.models);
+      assert.equal(json.providers[spec.id]!.models[0]!.reasoning, reasoning ?? false);
+      assert.deepEqual(json.providers[spec.id]!.models[0]!.cost, model.cost);
+      assert.deepEqual((await reloaded.statuses())[0]!.models, spec.models);
     });
   }
 }

@@ -71,13 +71,14 @@ export function providerBody() {
     .filter(Boolean)
     .map((l: string) => {
       const [id, name, contextWindow, maxTokens, reasoning] = l.split("|").map((p) => p.trim());
+      const capability = reasoning === "true" || reasoning === "false" ? reasoning === "true" : reasoning || undefined;
       return {
         ...d.modelSpecs?.find((model: any) => model.id === id),
         id,
         name: name || undefined,
         contextWindow: contextWindow ? Number(contextWindow) : undefined,
         maxTokens: maxTokens ? Number(maxTokens) : undefined,
-        reasoning: reasoning ? (reasoning === "true" ? true : reasoning === "false" ? false : reasoning) : undefined,
+        reasoning: capability,
       };
     });
   return {
