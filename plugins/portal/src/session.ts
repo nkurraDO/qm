@@ -32,6 +32,7 @@ export interface SessionClaims {
   org: string;
   name?: string;
   auth?: number;
+  oidcIssuer?: string;
   anon?: boolean;
   appOnly?: boolean;
   iat: number;

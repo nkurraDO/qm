@@ -42,6 +42,7 @@ import {
   type OidcConfig,
   type PrincipalRule,
   hostedDomainHint,
+  endSessionUrl,
 } from "./oidc.ts";
 import {
   proxyToSurface,
@@ -1030,6 +1031,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (pathname === "/auth/desktop" || pathname === "/auth/desktop/redeem") return desktopLogin(req, res, url);
   if (pathname === "/auth/invite") return inviteLogin(req, res);
   if (pathname === "/auth/admin-login") return adminLogin(req, res);
+  if (pathname === "/auth/signed-out" && method === "GET") {
+    return sendHtml(
+      res,
+      200,
+      connectPage({
+        title: "Signed out",
+        body: "You have signed out of this portal.",
+        action: `<a class="btn" href="/auth/login">Sign in</a>`,
+      }),
+    );
+  }
   if (pathname === "/auth/logout" && method === "POST") {
     if (!sameOriginRequest(req)) return json(res, 403, { error: "forbidden" });
     if (AUTH_BROKER_UPSTREAM && url.searchParams.get("everywhere") === "1") {
@@ -1057,6 +1069,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
     }
     const signedOutSession = currentSession(req);
+    const logoutOidc =
+      !signedOutSession?.anon && signedOutSession?.oidcIssuer
+        ? trustedOidc?.issuer === signedOutSession.oidcIssuer
+          ? trustedOidc
+          : !AUTH_BROKER_UPSTREAM && OIDC.issuer === signedOutSession.oidcIssuer
+            ? OIDC
+            : null
+        : null;
+    const redirectTo = logoutOidc ? ((await endSessionUrl(logoutOidc)) ?? "/auth/signed-out") : "/";
     setSession(res, [
       ...(signedOutSession ? loginProviderCookie(signedOutSession.sub) : []),
       clearCookie("portal_session", "/", SECURE_COOKIES, COOKIE_DOMAIN),
@@ -1071,10 +1092,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         : []),
     ]);
     if (wantsHtml(req)) {
-      res.writeHead(303, { location: "/", "cache-control": "no-store" });
+      res.writeHead(303, { location: redirectTo, "cache-control": "no-store" });
       return void res.end();
     }
-    return json(res, 200, { ok: true });
+    return json(res, 200, { ok: true, redirectTo });
   }
 
   if (brokerPath) {
@@ -1596,7 +1617,7 @@ async function trustedAuth(req: IncomingMessage, res: ServerResponse, url: URL):
       );
       adminCache.delete(identity.sub);
     }
-    setAuthenticatedSession(res, identity.sub, identity.name);
+    setAuthenticatedSession(res, identity.sub, identity.name, false, trustedOidc!.issuer);
     res.writeHead(302, {
       location: sanitizeReturnTo(identity.returnTo, PUBLIC_URL, APPS_DOMAIN),
       "cache-control": "no-store",
@@ -1611,7 +1632,13 @@ async function trustedAuth(req: IncomingMessage, res: ServerResponse, url: URL):
   }
 }
 
-function setAuthenticatedSession(res: ServerResponse, sub: string, name = "", appOnly = false): void {
+function setAuthenticatedSession(
+  res: ServerResponse,
+  sub: string,
+  name = "",
+  appOnly = false,
+  oidcIssuer?: string,
+): void {
   const now = Math.floor(Date.now() / 1000);
   const session: SessionClaims = {
     k: "session",
@@ -1621,6 +1648,7 @@ function setAuthenticatedSession(res: ServerResponse, sub: string, name = "", ap
     iat: now,
     exp: now + SESSION_TTL_S,
     ...(name ? { name } : {}),
+    ...(oidcIssuer ? { oidcIssuer } : {}),
     ...(appOnly ? { appOnly: true } : {}),
   };
   setSession(res, [
@@ -1707,7 +1735,7 @@ async function authCallback(req: IncomingMessage, res: ServerResponse, url: URL)
     return fail(errMessage(e, "sign-in failed"));
   }
 
-  setAuthenticatedSession(res, principal.sub, name, principal.appOnly);
+  setAuthenticatedSession(res, principal.sub, name, principal.appOnly, OIDC.issuer);
   res.writeHead(302, {
     location: sanitizeReturnTo(tmp.returnTo, PUBLIC_URL, APPS_DOMAIN),
     "cache-control": "no-store",

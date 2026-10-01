@@ -7247,7 +7247,11 @@
 
         if (API_BASE) {
           try {
-            await fetch("/auth/logout", { method: "POST" });
+            const response = await fetch("/auth/logout", { method: "POST", headers: { accept: "application/json" } });
+            if (!response.ok) return;
+            const result = await response.json();
+            location.href = result.redirectTo || "/";
+            return;
           } catch {}
           location.href = "/";
           return;

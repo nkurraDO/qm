@@ -261,9 +261,11 @@ export async function signOut(): Promise<void> {
     return;
   }
   let endedSession: boolean;
+  let redirectTo = "/";
   try {
     const r = await fetch("/auth/logout", { method: "POST", headers: { accept: "application/json" } });
     endedSession = r.ok;
+    if (r.ok) redirectTo = ((await r.json()) as { redirectTo?: string }).redirectTo ?? "/";
   } catch {
     endedSession = false;
   }
@@ -272,7 +274,7 @@ export async function signOut(): Promise<void> {
     return;
   }
   clearPortalAttempt();
-  location.href = "/";
+  location.href = redirectTo;
 }
 
 export async function exitImpersonation(): Promise<void> {
