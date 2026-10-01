@@ -1091,9 +1091,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         logoutOidc = OIDC;
     }
     const localRedirect =
-      !AUTH_BROKER_UPSTREAM && !LOCAL_AUTH_BYPASS && signedOutSession && !signedOutSession.anon
-        ? "/auth/signed-out"
-        : "/";
+      !AUTH_BROKER_UPSTREAM && signedOutSession && !signedOutSession.anon ? "/auth/signed-out" : "/";
     const redirectTo = logoutOidc ? ((await endSessionUrl(logoutOidc)) ?? "/auth/signed-out") : localRedirect;
     setSession(res, [
       ...(signedOutSession ? loginProviderCookie(signedOutSession.sub) : []),
