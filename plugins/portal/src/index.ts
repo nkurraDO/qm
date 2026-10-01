@@ -1032,6 +1032,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (pathname === "/auth/invite") return inviteLogin(req, res);
   if (pathname === "/auth/admin-login") return adminLogin(req, res);
   if (pathname === "/auth/signed-out" && method === "GET") {
+    if (currentSession(req))
+      return sendHtml(
+        res,
+        409,
+        connectPage({
+          title: "Still signed in",
+          body: "Use Sign out from the account menu to end this session.",
+          action: `<a class="btn" href="/">Back to the portal</a>`,
+        }),
+      );
     return sendHtml(
       res,
       200,
@@ -1071,12 +1081,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const signedOutSession = currentSession(req);
     let logoutOidc: OidcConfig | null = null;
     if (!signedOutSession?.anon && signedOutSession?.oidcIssuer) {
-      if (trustedOidc?.issuer === signedOutSession.oidcIssuer) logoutOidc = trustedOidc;
-      else if (!AUTH_BROKER_UPSTREAM && OIDC.issuer === signedOutSession.oidcIssuer) logoutOidc = OIDC;
+      if (trustedOidc?.issuer === signedOutSession.oidcIssuer && trustedOidc.clientId === signedOutSession.oidcClientId)
+        logoutOidc = trustedOidc;
+      else if (
+        !AUTH_BROKER_UPSTREAM &&
+        OIDC.issuer === signedOutSession.oidcIssuer &&
+        OIDC.clientId === signedOutSession.oidcClientId
+      )
+        logoutOidc = OIDC;
     }
-    const redirectTo = logoutOidc ? ((await endSessionUrl(logoutOidc)) ?? "/auth/signed-out") : "/";
+    const localRedirect =
+      !AUTH_BROKER_UPSTREAM && !LOCAL_AUTH_BYPASS && signedOutSession && !signedOutSession.anon
+        ? "/auth/signed-out"
+        : "/";
+    const redirectTo = logoutOidc ? ((await endSessionUrl(logoutOidc)) ?? "/auth/signed-out") : localRedirect;
     setSession(res, [
       ...(signedOutSession ? loginProviderCookie(signedOutSession.sub) : []),
+      clearCookie("portal_impersonate", "/", SECURE_COOKIES),
+      clearCookie("portal_trusted_tmp", "/auth/trusted", SECURE_COOKIES),
       clearCookie("portal_session", "/", SECURE_COOKIES, COOKIE_DOMAIN),
       clearCookie(FRAME_SESSION_COOKIE, "/", SECURE_COOKIES, COOKIE_DOMAIN),
       ...(COOKIE_DOMAIN
@@ -1614,7 +1636,7 @@ async function trustedAuth(req: IncomingMessage, res: ServerResponse, url: URL):
       );
       adminCache.delete(identity.sub);
     }
-    setAuthenticatedSession(res, identity.sub, identity.name, false, trustedOidc!.issuer);
+    setAuthenticatedSession(res, identity.sub, identity.name, false, trustedOidc!);
     res.writeHead(302, {
       location: sanitizeReturnTo(identity.returnTo, PUBLIC_URL, APPS_DOMAIN),
       "cache-control": "no-store",
@@ -1634,7 +1656,7 @@ function setAuthenticatedSession(
   sub: string,
   name = "",
   appOnly = false,
-  oidcIssuer?: string,
+  oidc?: OidcConfig,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   const session: SessionClaims = {
@@ -1645,7 +1667,7 @@ function setAuthenticatedSession(
     iat: now,
     exp: now + SESSION_TTL_S,
     ...(name ? { name } : {}),
-    ...(oidcIssuer ? { oidcIssuer } : {}),
+    ...(oidc ? { oidcIssuer: oidc.issuer, oidcClientId: oidc.clientId } : {}),
     ...(appOnly ? { appOnly: true } : {}),
   };
   setSession(res, [
@@ -1732,7 +1754,7 @@ async function authCallback(req: IncomingMessage, res: ServerResponse, url: URL)
     return fail(errMessage(e, "sign-in failed"));
   }
 
-  setAuthenticatedSession(res, principal.sub, name, principal.appOnly, OIDC.issuer);
+  setAuthenticatedSession(res, principal.sub, name, principal.appOnly, OIDC);
   res.writeHead(302, {
     location: sanitizeReturnTo(tmp.returnTo, PUBLIC_URL, APPS_DOMAIN),
     "cache-control": "no-store",
