@@ -3690,6 +3690,23 @@ export async function awsSecretsPush(config: QmConfig, configDir: string, envFil
       const affected = workloads.filter((workload) =>
         workloadSecrets(config, workload, uploaded).some((secret) => uploaded[secret.name]),
       );
+      if (baseline && before) {
+        for (const workload of affected) {
+          if (aws.backgroundWorkControl && workload === "core") continue;
+          const live = awsJson<{ taskDefinition?: { runtimePlatform?: { cpuArchitecture?: string } } }>(aws, [
+            "ecs",
+            "describe-task-definition",
+            "--task-definition",
+            before.tasks[workload]!,
+          ]).taskDefinition;
+          const architecture = live?.runtimePlatform?.cpuArchitecture ?? "X86_64";
+          const expected = workloadArchitecture(config, workload) === "arm64" ? "ARM64" : "X86_64";
+          if (architecture !== expected)
+            throw new CliError(
+              `cannot rotate secrets while ${workload} uses ${architecture} but its configuration selects ${expected}; set aws.services.${workload}.architecture to match the deployed image or rebuild it with qm up --build-from`,
+            );
+        }
+      }
       if (baseline?.backgroundDeploymentId) {
         for (const secret of staged.filter((item) =>
           ["DEPLOYMENT_CONTROL_SECRET", "CORE_SIGNING_SECRET"].includes(item.name),

@@ -2587,6 +2587,45 @@ test("AWS secret upload rejects active services when no deployment manifest exis
   }
 });
 
+test("AWS secret rotation rejects architecture changes before uploading or restarting", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "qm-aws-secret-architecture-"));
+  const secretsConfig: QmConfig = { ...oneServiceConfig(), env: {} };
+  const operator = computedSecrets(secretsConfig).filter(
+    (secret) => secret.managedBy === "operator" && secret.required,
+  );
+  writeFileSync(join(dir, ".env"), operator.map((secret) => `${secret.name}=${TEST_SECRET_VALUE}`).join("\n"));
+  const fake = statefulAws(dir, secretsConfig);
+  const state = JSON.parse(readFileSync(fake.state, "utf8"));
+  const taskArn = state.services["acme-core"].taskDefinition;
+  const image = `123456789012.dkr.ecr.us-west-2.amazonaws.com/qm-core@sha256:${"a".repeat(64)}`;
+  state.definitions[taskArn] = renderTaskDefinition(secretsConfig, "core", image);
+  state.definitions[taskArn].runtimePlatform.cpuArchitecture = "ARM64";
+  state.dynamo = manifestItems([{ id: "current", imageLabel: "release", tasks: { core: taskArn } }], "current");
+  writeFileSync(fake.state, JSON.stringify(state));
+  try {
+    for (const architecture of [undefined, "amd64"] as const) {
+      secretsConfig.aws!.services.core!.architecture = architecture;
+      await assert.rejects(
+        () => awsSecretsPush(secretsConfig, dir),
+        /core uses ARM64 but its configuration selects X86_64/,
+      );
+      assert.doesNotMatch(
+        readFileSync(fake.log, "utf8"),
+        /secretsmanager put-secret-value|ecs (?:register-task-definition|update-service)/,
+      );
+    }
+    secretsConfig.aws!.services.core!.architecture = "arm64";
+    await awsSecretsPush(secretsConfig, dir);
+    const rotated = JSON.parse(readFileSync(fake.state, "utf8"));
+    const task = rotated.definitions[rotated.services["acme-core"].taskDefinition];
+    assert.equal(task.runtimePlatform.cpuArchitecture, "ARM64");
+    assert.equal(task.containerDefinitions[0].image, image);
+  } finally {
+    fake.restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("AWS secret rotation holds the deploy lease across the complete write set", async () => {
   const dir = mkdtempSync(join(tmpdir(), "qm-aws-secret-lease-"));
   const secretsConfig: QmConfig = { ...oneServiceConfig(), env: {} };
