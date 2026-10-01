@@ -772,9 +772,17 @@ function releaseCandidate(config: QmConfig, path: string): AwsReleaseCandidate {
     Array.isArray(candidate.images) ||
     !candidate.imageProvenance ||
     typeof candidate.imageProvenance !== "object" ||
-    Array.isArray(candidate.imageProvenance)
+    Array.isArray(candidate.imageProvenance) ||
+    (candidate.architectures !== undefined &&
+      (!candidate.architectures ||
+        typeof candidate.architectures !== "object" ||
+        Array.isArray(candidate.architectures)))
   ) {
     throw new CliError(`AWS release candidate ${path} has an invalid contract or targets another AWS account/region`);
+  }
+  for (const [workload, architecture] of Object.entries(candidate.architectures ?? {})) {
+    if (!candidate.images[workload] || (architecture !== "arm64" && architecture !== "amd64"))
+      throw new CliError(`AWS release candidate ${path} has an invalid ${workload} architecture`);
   }
   for (const [workload, image] of Object.entries(candidate.images)) {
     const provenance = candidate.imageProvenance[workload];
@@ -793,6 +801,20 @@ function releaseCandidate(config: QmConfig, path: string): AwsReleaseCandidate {
     ) {
       throw new CliError(`AWS release candidate ${path} has an invalid ${workload} image or provenance`);
     }
+    const architecture = candidate.architectures?.[workload];
+    if (candidate.architectures && architecture !== workloadArchitecture(config, workload))
+      throw new CliError(
+        `AWS release candidate ${path} architecture for ${workload} does not match its configuration; use a matching architecture or rebuild the candidate`,
+      );
+    if (
+      architecture === undefined &&
+      provenance?.kind === "source-build" &&
+      isServiceName(workload) &&
+      !aws.services[workload]!.architecture
+    )
+      throw new CliError(
+        `AWS release candidate ${path} has no architecture for source-built ${workload}; set aws.services.${workload}.architecture to the image platform or rebuild the candidate`,
+      );
   }
   return candidate as AwsReleaseCandidate;
 }
@@ -1245,6 +1267,7 @@ interface AwsReleaseCandidate {
   label: string;
   images: Record<string, string>;
   imageProvenance: Record<string, DeploymentImageProvenance>;
+  architectures?: Record<string, "arm64" | "amd64">;
 }
 
 interface DeploymentManifest {
@@ -2322,6 +2345,7 @@ export async function awsUp(config: QmConfig, _configDir: string, opts: AwsUpOpt
       label: opts.imageLabel!,
       images,
       imageProvenance,
+      architectures: Object.fromEntries(services.map((service) => [service, workloadArchitecture(config, service)])),
     };
     writeFileSync(opts.candidateOut!, `${JSON.stringify(release, null, 2)}\n`, { mode: 0o600 });
     ok(`AWS release candidate written to ${opts.candidateOut}`);

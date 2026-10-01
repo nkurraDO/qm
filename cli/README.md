@@ -32,6 +32,14 @@ The CLI deploys long-running QM services; it is not the runtime. Docker runs
 them locally, Fly runs them as Fly apps with Fly Machines for agent computers, and AWS
 runs digest-pinned tasks on ECS Fargate (amd64 by default for first-party services) with Lambda MicroVM agent computers.
 
+When upgrading an AWS source deployment that previously relied on the ARM64 default,
+set each existing workload's `architecture: "arm64"` explicitly until rebuilding
+its image for another platform. Secret rotation refuses a task-platform change
+before uploading secrets. New release candidates record their workload architectures;
+legacy source-built first-party candidates without that record require an explicit
+architecture matching the image, or regeneration with the current CLI. Candidate
+deployment and migration reject platform mismatches before accessing AWS.
+
 ## Deployment directory
 
 ```text
