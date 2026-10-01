@@ -3949,6 +3949,17 @@ test("AWS live check uses the package-pinned source image without consulting mut
   process.env.PATH = `${dir}:${priorPath}`;
   try {
     await assert.doesNotReject(() => awsCheckLive(single, { report: false }));
+    await assert.rejects(
+      () =>
+        awsCheckLive(
+          {
+            ...single,
+            aws: { ...single.aws!, services: { core: { ...single.aws!.services.core!, architecture: "arm64" } } },
+          },
+          { report: false },
+        ),
+      /task-definition drift.*runtimePlatform.cpuArchitecture/,
+    );
     process.env.AWS_FAKE_SECRET_VALUE = "short";
     await assert.rejects(() => awsCheckLive(single, { report: false }), /secret CORE_SIGNING_SECRET/);
     if (priorSecretValue === undefined) delete process.env.AWS_FAKE_SECRET_VALUE;
@@ -3958,7 +3969,7 @@ test("AWS live check uses the package-pinned source image without consulting mut
     const overridden: QmConfig = {
       ...single,
       imageOverrides: { core: `ghcr.io/acme/core@sha256:${"b".repeat(64)}` },
-      aws: { ...single.aws!, services: { core: { ...single.aws!.services.core!, architecture: "arm64" } } },
+      aws: { ...single.aws!, services: { core: { ...single.aws!.services.core!, architecture: "amd64" } } },
     };
     await assert.rejects(
       () => awsCheckLive(overridden, { report: false }),
