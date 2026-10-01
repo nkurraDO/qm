@@ -113,7 +113,7 @@ export function awsWorkloadArchitecture(config: QmConfig, workload: string): "ar
       `aws.services.${workload}.architecture is required because ${workload} uses an external prebuilt image`,
     );
   }
-  return service.architecture ?? "arm64";
+  return service.architecture ?? (isServiceName(workload) ? "amd64" : "arm64");
 }
 
 export const MODEL_PROVIDERS = ["anthropic", "openai", "openrouter"] as const;

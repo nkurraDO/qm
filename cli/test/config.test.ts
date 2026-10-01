@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CONFIG_FILENAME,
+  awsWorkloadArchitecture,
   loadConfigAt,
   loadConfigInDir,
   localSandboxActive,
@@ -1504,4 +1505,20 @@ test("proxy deployment rendering names the mode and classifier", () => {
       });
     },
   );
+});
+
+test("AWS built-in architecture defaults match published images and retain explicit choices", () => {
+  const workloads = ["core", "web-ui", "admin", "portal", "auth", "linear"];
+  const config = {
+    plugins: [{ name: "linear" }],
+    imageOverrides: {},
+    aws: { services: Object.fromEntries(workloads.map((name) => [name, {}])) },
+  } as unknown as import("../src/config.ts").QmConfig;
+  for (const workload of workloads) {
+    assert.equal(awsWorkloadArchitecture(config, workload), workload === "linear" ? "arm64" : "amd64");
+    for (const architecture of ["arm64", "amd64"] as const) {
+      config.aws!.services[workload]!.architecture = architecture;
+      assert.equal(awsWorkloadArchitecture(config, workload), architecture);
+    }
+  }
 });

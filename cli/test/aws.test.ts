@@ -1991,7 +1991,7 @@ else console.log("");`,
 test("AWS task definitions are digest-pinned and route only computed secrets", () => {
   const image = `123456789012.dkr.ecr.us-west-2.amazonaws.com/qm-core@sha256:${"a".repeat(64)}`;
   const task = renderTaskDefinition(config, "core", image);
-  assert.equal(task.runtimePlatform.cpuArchitecture, "ARM64");
+  assert.equal(task.runtimePlatform.cpuArchitecture, "X86_64");
   assert.equal(task.executionRoleArn, "arn:aws:iam::123456789012:role/acme-qm-task-execution");
   assert.equal(task.taskRoleArn, "arn:aws:iam::123456789012:role/acme-qm-core-task");
   const container = task.containerDefinitions[0]!;
@@ -2024,6 +2024,8 @@ test("AWS task architecture allows per-workload overrides", () => {
   };
   const coreImage = `123456789012.dkr.ecr.us-west-2.amazonaws.com/qm-core@sha256:${"a".repeat(64)}`;
   assert.equal(renderTaskDefinition(amd64Core, "core", coreImage).runtimePlatform.cpuArchitecture, "X86_64");
+  amd64Core.aws!.services.core!.architecture = "arm64";
+  assert.equal(renderTaskDefinition(amd64Core, "core", coreImage).runtimePlatform.cpuArchitecture, "ARM64");
 });
 
 test("AWS task parity ignores only ECS response defaults and catches live-only fields", () => {

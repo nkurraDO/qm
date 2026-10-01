@@ -30,7 +30,7 @@ path locally.
 
 The CLI deploys long-running QM services; it is not the runtime. Docker runs
 them locally, Fly runs them as Fly apps with Fly Machines for agent computers, and AWS
-runs digest-pinned ARM64 tasks on ECS Fargate with Lambda MicroVM agent computers.
+runs digest-pinned tasks on ECS Fargate (amd64 by default for first-party services) with Lambda MicroVM agent computers.
 
 ## Deployment directory
 
