@@ -62,6 +62,69 @@ flowchart LR
 Design notes and the decision record live in [`docs/mars.md`](docs/mars.md) and
 [`adrs/mars-sandbox-backend.md`](adrs/mars-sandbox-backend.md).
 
+## What a user actually experiences
+
+Nobody using QM picks a sandbox, names one, or waits for one on purpose. MARS is invisible until
+the agent needs a shell, and from then on it is mostly invisible again. Here is the whole arc.
+
+**Starting QM creates nothing.** Setting `SANDBOX_BACKEND=mars` only constructs the backend. No
+session exists in your DigitalOcean team, and nothing is billed, until a turn needs one. A
+deployment can sit idle for a week with zero microVMs.
+
+**Asking a question that needs no shell still creates nothing.** "What did we decide about
+pricing?" reads memory and answers. The sandbox is never touched.
+
+**The first command is what provisions the microVM.** When the model decides to call an
+execute-family tool, QM creates the session, waits for it to report ready, opens the port-forward
+tunnel, and runs the command. The person sees a brief "Creating the sandbox…" status and then
+their output. In our measurements that cold path — create, boot, tunnel, exec, reply — came back
+in about ten seconds.
+
+**Everything after that reuses the same microVM.** The session name is derived from the scope, not
+random, so QM can find it again: it tries the session id it stored, then asks MARS to list
+anything matching the name, and only creates when both come up empty. Warm commands skip the
+boot entirely and return in well under a second.
+
+**Each person and each room gets its own.** This is QM's isolation model, and MARS enforces it at
+the hypervisor. Your DM with the agent, a project channel, and a colleague's DM are three
+separate Firecracker VMs that cannot see each other's files. The names make this legible in the
+DigitalOcean API — ours looked like `qmdev-personal-naveenkurra-3de9b3`.
+
+**Files and installed tools persist between conversations.** The home directory lives in the
+guest's persistent workspace volume, so a repo cloned on Monday is still cloned on Friday, and a
+`pip install` survives. When a turn ends QM _pauses_ the session rather than destroying it, which
+preserves the whole machine. If `MARS_SNAPSHOT_S3_BUCKET` is set it also snapshots the home
+periodically, so even a destroyed session can be rehydrated into a fresh one.
+
+**Idle VMs get reclaimed, and the user never finds out.** MARS reclaims sessions after
+`MARS_IDLE_TIMEOUT_SEC`. The next command finds the old session gone, QM treats that as "absent"
+rather than an error, provisions a replacement, and hydrates the home from the last snapshot. The
+person just sees a slower-than-usual first command.
+
+```mermaid
+sequenceDiagram
+  participant U as Person
+  participant QM as QM core
+  participant M as MARS
+  U->>QM: "what did we decide about pricing?"
+  QM-->>U: answer (no sandbox involved)
+  U->>QM: "clone the repo and run the tests"
+  QM->>M: POST /v2/agents/sessions
+  M-->>QM: session ready
+  QM->>M: exec over port-forward :8443
+  M-->>QM: stdout
+  QM-->>U: test output (~10s cold)
+  Note over QM,M: turn ends -- session paused, home preserved
+  U->>QM: "now fix the failing test"
+  QM->>M: resume + exec (same microVM, files intact)
+  QM-->>U: output (sub-second warm)
+```
+
+For sessions that have run tools before, QM starts provisioning in the background at the top of
+the turn instead of waiting for the model to ask, which hides most of the cold start. That
+pre-warm is fire-and-forget: if it fails, the turn proceeds and the real tool call provisions
+normally.
+
 ## Hosting it on a Droplet
 
 Nothing about the MARS backend changes QM's own deployment story — follow the upstream
