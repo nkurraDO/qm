@@ -2,27 +2,27 @@
 
 Naveen, from the MARS team at DigitalOcean. MARS (Managed Agent Runtime Stack) hosts coding agents in DO-managed Firecracker microVMs. We looked at what it would take for qm to run on it and the answer is the same one Agent37 arrived at: the part of qm that wants hosting is the agent computer, so this is another sandbox backend, next to E2B, Modal, Sprites, smolmachines, Porter, AWS, Superserve and Agent37.
 
-The reason this is worth doing at all is that MARS is a managed-loop product by default — it boots Claude Code or OpenCode _inside_ the microVM, next to a process called OHR that translates events back to our control plane. That is not what qm wants, because qm already has a loop. But our platform now admits a session with no agent in it at all: a manifest that says `agent: none` lands on MARS's own bare base template, with no managed agent, no OHR, no OHP, and no model credential. The caller drives the microVM itself over exec, workspace transfer and port-forward. That mode exists for customers who want MARS purely for code execution — evaluations, CI-style fan-out, arbitrary compute — and qm lands in the same seat. Nothing about qm's orchestrator, harness router or tool surface has to change.
+The reason this is worth doing at all is that MARS is a managed-loop product by default — it boots Claude Code or OpenCode _inside_ the microVM, next to a runtime process that translates agent events back to our control plane and an event stream that `doctl agents attach` tails. That is not what qm wants, because qm already has a loop. But our platform now admits a session with no agent in it at all: a manifest that says `agent: none` lands on MARS's own bare base template, with no managed agent, no event-translation runtime, and no model credential. The caller drives the microVM itself over exec, workspace transfer and port-forward. That mode exists for customers who want MARS purely for code execution — evaluations, CI-style fan-out, arbitrary compute — and qm lands in the same seat. Nothing about qm's orchestrator, harness router or tool surface has to change.
 
 ```mermaid
 flowchart LR
   subgraph MANAGED["MARS default: managed loop"]
-    M1["microVM"] --> M2["Claude Code / OpenCode"] --> M3["OHR"] --> M4["OHP data plane"] --> M5["doctl attach"]
+    M1["microVM"] --> M2["Claude Code / OpenCode"] --> M3["event-translation runtime"] --> M4["event stream"] --> M5["doctl agents attach"]
   end
 
   subgraph INVERTED["agent: none -- what qm uses"]
     Q1["qm core<br/>orchestrator + vendored harness"] --> Q2["the loop stays here"]
-    Q2 --> Q3["microVM<br/>bare sandbox, no agent, no OHR"]
+    Q2 --> Q3["microVM<br/>bare sandbox, no agent"]
   end
 ```
 
 The lifecycle lines up closely enough with the E2B backend that this is modeled on that pair of files rather than on a new shape. One MARS session per qm scope, created on first use, named with the scope name so an operator can find it with `doctl agents list`, paused at teardown, deleted when qm destroys the scope. Our pause keeps the microVM's disk and memory, which is what `provider_managed` persistence already means in your profile.
 
-Everything qm needs is on one host with one credential. Session lifecycle is harness-api, which external callers reach as REST through Oceanus, the DO edge proxy that validates a DO IAM token and forwards the authenticated team and user as headers — the same path doctl takes. So that half is plain HTTP+JSON with a token, and the team identity comes from the token rather than from configuration.
+Everything qm needs is on one host with one credential. Session lifecycle is our control plane, which external callers reach as REST through the DO API edge, which validates a DO IAM token and forwards the authenticated team and user as headers — the same path doctl takes. So that half is plain HTTP+JSON with a token, and the team identity comes from the token rather than from configuration.
 
-Exec and file transfer take a different route to the same host. Every microVM runs `sandbox-agent`, a gRPC server on guest port 8443 that our own control plane dials for exec, transfer and readiness. qm reaches it the way `doctl agents port-forward` does: a bearer-authenticated WebSocket to `/v2/agents/sessions/{id}/port-forward/8443`, which harness-api bridges to the guest port and qm exposes as a local TCP listener for a gRPC client. 8443 is explicitly allowed by our tunnel port policy, the guest listener is plaintext h2c with no client certificate, and we register the port-forward route without a request deadline on purpose. So a long command is bounded by qm's own `SANDBOX_TIMEOUT_SEC` and nothing else.
+Exec and file transfer take a different route to the same host. Every microVM runs `sandbox-agent`, a gRPC server on guest port 8443 that our own control plane dials for exec, transfer and readiness. qm reaches it the way `doctl agents port-forward` does: a bearer-authenticated WebSocket to `/v2/agents/sessions/{id}/port-forward/8443`, which the control plane bridges to the guest port and qm exposes as a local TCP listener for a gRPC client. 8443 is explicitly allowed by our tunnel port policy, the guest listener is plaintext h2c with no client certificate, and we register the port-forward route without a request deadline on purpose. So a long command is bounded by qm's own `SANDBOX_TIMEOUT_SEC` and nothing else.
 
-Worth saying why qm does not use `POST /sandbox/exec`, since we built it and it looks like the obvious fit. It terminates in harness-api and buffers the result, so it clamps to four minutes and one mebibyte per stream and carries no per-command environment. Those bounds are right for `doctl agents exec` and wrong for an agent turn.
+Worth saying why qm does not use `POST /v2/agents/sessions/{id}/sandbox/exec`, since we built it and it looks like the obvious fit. It terminates in the control plane and buffers the result, so it clamps to four minutes and one mebibyte per stream and carries no per-command environment. Those bounds are right for `doctl agents exec` and wrong for an agent turn.
 
 Here is a turn end to end. Lifecycle goes through the edge as REST; exec and files go through the tunnel to the guest.
 
@@ -30,8 +30,8 @@ Here is a turn end to end. Lifecycle goes through the edge as REST; exec and fil
 sequenceDiagram
   participant O as qm orchestrator
   participant B as mars-sandbox.ts
-  participant E as Oceanus edge
-  participant H as harness-api
+  participant E as DO API edge
+  participant H as control plane
   participant T as port-forward tunnel
   participant V as microVM<br/>sandbox-agent :8443
 
@@ -40,12 +40,12 @@ sequenceDiagram
   B->>E: POST /v2/agents/sessions<br/>agents.yaml: name, agent: none, permissions, egress
   Note right of E: validates DO IAM token,<br/>forwards team + user headers
   E->>H: CreateSession
-  H->>V: sandboxsvc + microvm.v1<br/>internal, not qm's concern
+  H->>V: provision the microVM<br/>internal, not qm's concern
   H-->>B: session_id, PROVISIONING
   B->>E: GET /v2/agents/sessions/{id}
   E-->>B: READY
   B->>T: wss /port-forward/8443<br/>Authorization: Bearer
-  T->>V: ProxyGuestPort
+  T->>V: bridge to guest :8443
   B->>V: Upload<br/>ro layers + layer tool files
   B-->>O: handle
 
@@ -77,7 +77,7 @@ What the PR adds
 - `src/sandbox/mars-sandbox.ts`. Provision creates or resumes the session and waits for it to become usable. Run is `Exec` over the tunnel. Files are `Upload` and `Download` rather than base64 through exec, since we have real transfer RPCs. Process sessions, read-only layers, layer tool install, home snapshots and blob staging come from the shared exec helpers unchanged.
 - Scope recovery without local state. Session names are team-unique among non-terminal sessions and `ListSessions` takes a `?name=` filter, so the backend can re-adopt a running sandbox after losing its durable record, the way the E2B backend re-adopts by sandbox metadata. `sandboxScopeName` already produces names that fit our 64-character, not-UUID-shaped rule.
 - Profile: `writablePersistence: "provider_managed"`, `processSessions: true`, `parksOnTeardown: true`, and `egressEnforcement: "domain"`. That last one is real rather than aspirational — a MARS sandbox gets NAT egress with a per-session host allowlist, and the manifest's `permissions.network` block narrows within it.
-- A `permissions` block on the session that sets `defaultAction: allow` and allows `bash`. Our `ExecInSandbox` is HITL-gated by default, which means every command would wait on a human decision through our approval router. qm runs its own approval gates at its own tool boundary and fires many commands per turn, so two gating systems in series would just deadlock. qm's posture stays authoritative; ours gets out of the way. This is deliberate and we would rather state it here than have it discovered later.
+- A `permissions` block on the session that sets `defaultAction: allow` and allows `bash`. Our managed exec path is approval-gated by default, which means every command would wait on a human decision through our approval router. qm runs its own approval gates at its own tool boundary and fires many commands per turn, so two gating systems in series would just deadlock. qm's posture stays authoritative; ours gets out of the way. This is deliberate and we would rather state it here than have it discovered later.
 
 What it does not do
 
@@ -89,6 +89,6 @@ What it does not do
 Two things we need from you, or at least need to agree on
 
 - Reachability runs both ways. qm needs to reach `api.digitalocean.com` and nothing else, which is the easy direction. But qm's sandboxes also call _back_ into core's self-API with their capability tokens, the way the E2B backend needs a public `PUBLIC_API_URL`. That means core's public URL has to be on the session's egress allowlist. For a qm deployment inside DO this is fine; for one on Fly or AWS it means our allowlist has to carry an arbitrary external host, which we should confirm is acceptable to your operators and ours.
-- We should agree on what the bare base carries. `agent: none` removed the prerequisite that used to sit here: no template has to be provisioned for your team, and we verified the guest is genuinely bare — no agent CLI on `PATH`, no `/opt/ohr`, no supervisor process, just `sandbox-agent`, `envd`, `otelcol` and s6. What it also lacks is `rg` and `jq`, which qm's agent prompts reach for by name. Python, Node and `git` are present. Either we add the small tools to the base or qm deployments want a template of their own, and we should decide which before this carries real traffic.
+- We should agree on what the bare base carries. `agent: none` removed the prerequisite that used to sit here: no template has to be provisioned for your team, and we verified the guest is genuinely bare — no agent CLI on `PATH`, no event-translation runtime, no agent supervisor, just `sandbox-agent`, `envd`, `otelcol` and s6 supervision. `bash`, `git`, `curl`, `tar`, Node, Python, `make` and `gcc` are present; `jq`, `rg` and `unzip` are not, and those three are reached for by name in agent prompts. The profile declares them not installed so the model does not try, but either we add the small tools to the base or qm deployments want a template of their own, and we should decide which before this carries real traffic.
 
-Tests run against an in-process harness-api, a real gRPC `sandbox-agent` and a WebSocket tunnel between them, so the transport is exercised end to end and CI needs no DO account and no credentials. We would rather this live upstream than in a fork, and we will keep it green as the sandbox contract moves.
+Tests run against an in-process control plane, a real gRPC `sandbox-agent` and a WebSocket tunnel between them, so the transport is exercised end to end and CI needs no DO account and no credentials. We would rather this live upstream than in a fork, and we will keep it green as the sandbox contract moves.

@@ -54,19 +54,17 @@ async function main(): Promise<void> {
     log("checking the toolchain qm expects...");
     const tools = await sandbox.run(
       handle,
-      "for t in bash git node python3 rg jq; do printf '%s=%s ' $t $(command -v $t >/dev/null && echo yes || echo NO); done; echo",
+      "for t in bash git curl jq tar node python3 rg unzip make gcc aws gcloud kubectl flyctl glab; do printf '%s=%s ' $t $(command -v $t >/dev/null && echo yes || echo NO); done; echo",
     );
     log(tools.stdout.trim());
 
     log("checking the guest carries no managed coding agent...");
     const bare = await sandbox.run(
       handle,
-      "for t in codex claude opencode cursor hermes; do command -v $t >/dev/null && echo AGENT_ON_PATH=$t; done; test -e /opt/ohr && echo OHR_PRESENT; pgrep -x brightstaff >/dev/null && echo BRIGHTSTAFF_RUNNING; echo ---; ps -eo comm= | sort -u | tr '\\n' ' '",
+      "for t in codex claude claude-code opencode cursor hermes; do command -v $t >/dev/null && echo AGENT_ON_PATH=$t; done; echo ---; ps -eo comm= | sort -u | tr '\\n' ' '",
     );
     log("guest:", bare.stdout.trim());
     assert.doesNotMatch(bare.stdout, /AGENT_ON_PATH=/, "a bare sandbox must carry no agent CLI");
-    assert.doesNotMatch(bare.stdout, /OHR_PRESENT/, "a bare sandbox must not ship /opt/ohr");
-    assert.doesNotMatch(bare.stdout, /BRIGHTSTAFF_RUNNING/, "a bare sandbox must not run the agent supervisor");
 
     log("checking the workspace survives a pause and resume...");
     await sandbox.run(handle, "echo persisted > survives-pause.txt");

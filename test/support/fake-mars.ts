@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { MARS_HOME_DIR } from "../../src/sandbox/mars-sandbox.ts";
 import {
   MarsCommandLostError,
   MarsHitlRejectedError,
@@ -15,6 +14,8 @@ import {
   type MarsSessionSummary,
 } from "../../src/sandbox/mars-client.ts";
 import { mkdtempSync } from "node:fs";
+
+const GUEST_HOME_DIR = "/workspace/home";
 
 interface FakeRecord {
   sessionId: string;
@@ -72,7 +73,7 @@ export function installFakeMars(): FakeMars {
       `export HOME=${JSON.stringify(r.home)}; ` +
       script
         .replace(/\btimeout \d+ /g, "")
-        .replaceAll(MARS_HOME_DIR, r.home)
+        .replaceAll(GUEST_HOME_DIR, r.home)
         .replace(remapPath, (mm) => (mm.startsWith(r.home) ? mm : `${r.home}/tmp/`))
     );
   };
@@ -119,13 +120,13 @@ export function installFakeMars(): FakeMars {
     },
     async readFileBytes(absPath): Promise<Uint8Array | null> {
       alive(r);
-      const hostPath = absPath.startsWith(MARS_HOME_DIR) ? r.home + absPath.slice(MARS_HOME_DIR.length) : absPath;
+      const hostPath = absPath.startsWith(GUEST_HOME_DIR) ? r.home + absPath.slice(GUEST_HOME_DIR.length) : absPath;
       if (!existsSync(hostPath)) return null;
       return new Uint8Array(readFileSync(hostPath));
     },
     async writeFileBytes(absPath, data): Promise<void> {
       alive(r);
-      const hostPath = absPath.startsWith(MARS_HOME_DIR) ? r.home + absPath.slice(MARS_HOME_DIR.length) : absPath;
+      const hostPath = absPath.startsWith(GUEST_HOME_DIR) ? r.home + absPath.slice(GUEST_HOME_DIR.length) : absPath;
       mkdirSync(dirname(hostPath), { recursive: true });
       writeFileSync(hostPath, Buffer.from(data));
     },

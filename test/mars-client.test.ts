@@ -81,11 +81,14 @@ test("the manifest carries size, idle timeout and the egress allowlist only when
   assert.match(full, /^ {2}- "proxy\.example\.com"$/m);
 });
 
-test("the vendored proto carries no internal annotations", () => {
+test("the vendored proto is the client subset and carries nothing provider-internal", () => {
   const proto = readFileSync(join(process.cwd(), "src/sandbox/mars-sandbox-agent.proto"), "utf8");
-  assert.doesNotMatch(proto, /do\/doge/);
-  assert.doesNotMatch(proto, /dorpc/);
   assert.match(proto, /service SandboxAgentService/);
+  for (const rpc of ["Exec", "Upload", "Download"]) assert.match(proto, new RegExp(`rpc ${rpc}\\(`));
+  for (const unused of ["Shell", "ImportFromURL", "ExportToURL", "Health", "StartChildProcess", "ProxyPort"])
+    assert.doesNotMatch(proto, new RegExp(`rpc ${unused}\\(`), `${unused} is unused and should not be vendored`);
+  for (const internal of [/do\/doge/, /dorpc/, /sandboxsvc/, /sandbox-service/, /microvm\.v1/, /MSANDBOX/, /169\.254/])
+    assert.doesNotMatch(proto, internal, `${internal.source} is provider-internal`);
 });
 
 test("creating a session posts a yaml manifest and waits for ready", async () => {

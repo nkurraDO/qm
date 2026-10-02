@@ -53,8 +53,7 @@ import type {
   TeardownOptions,
 } from "./sandbox.ts";
 
-export const MARS_HOME_DIR = "/workspace/home";
-const HOME_DIR = MARS_HOME_DIR;
+const HOME_DIR = "/workspace/home";
 const WORKSPACE_BASENAME = "workspace";
 const RO_LAYERS_TAR = ".ro-layers.tar";
 const RO_LAYERS_MANIFEST = ".ro-layers.manifest";
@@ -242,7 +241,7 @@ export function createMarsSandbox(workspace: WorkspaceStore, opts: MarsSandboxOp
 
   const profile: AgentComputerProfile = {
     backend: "mars",
-    writablePersistence: "provider_managed",
+    writablePersistence: client.nativePause ? "provider_managed" : "snapshot_to_workspace",
     processSessions: true,
     parksOnTeardown: true,
     egressEnforcement: opts.egressProxyUrl ? "domain" : "none",
@@ -250,10 +249,13 @@ export function createMarsSandbox(workspace: WorkspaceStore, opts: MarsSandboxOp
       os: "Linux — DigitalOcean MARS Firecracker microVM (provider pause preserves state; publish durable work to git or Files)",
       runtimes: ["Node", "Python 3"],
       get tools() {
-        return visibleTools(["git", "curl", "jq", "tar", "python3", ...(opts.extraTools ?? [])]);
+        return visibleTools(["git", "curl", "tar", "python3", ...(opts.extraTools ?? [])]);
       },
       get notInstalled() {
-        return visibleNotInstalled(["aws", "gcloud", "kubectl", "flyctl", "glab"], opts.extraTools ?? []);
+        return visibleNotInstalled(
+          ["jq", "rg", "unzip", "aws", "gcloud", "kubectl", "flyctl", "glab"],
+          opts.extraTools ?? [],
+        );
       },
       homeDir: HOME_DIR,
       workdir: workspaceDir,

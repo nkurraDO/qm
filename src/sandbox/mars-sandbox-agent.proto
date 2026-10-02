@@ -2,407 +2,101 @@ syntax = "proto3";
 
 package do.teams.hosted_agents.runtime.sandbox_agent.v1;
 
-import "google/protobuf/empty.proto";
-
-
-
-// SandboxAgentService is the in-microVM data-plane gRPC server. Same role as
-// e2b's `envd`: a process that runs in every session microVM and is the
-// surface sandbox-service dials at MicroVM.guest_ip:8443 to do anything
-// inside the guest — exec, shell, file transfer, readiness
-// probing.
-//
-// The binary is owned by hosted-agents (NOT the Sandbox team) and ships in
-// every OHS microVM image. Sandbox-service is its only caller.
-//
-// Sibling process: OHR (Open Harness Runtime) — the event-translation
-// process. OHR is outbound-only; nothing dials OHR. SandboxAgentService and
-// OHR coordinate over a local unix socket inside the guest (e.g., to notify
-// OHR when sandbox-agent's internal supervisor restarts the coding agent). See
-// ../README.md.
-//
-// Naming note: "agent" in `sandbox-agent` means *the in-guest agent of the
-// sandbox-service control plane*, NOT the coding agent (claude-code,
-// opencode) — those are kept separate in our vocabulary. Always use the full
-// "sandbox-agent" form in prose to avoid confusion.
-//
-// Transport: internal gRPC over mTLS. sandbox-service presents
-// <SANDBOX_SVC_SAN>; sandbox-agent validates the SAN before serving any RPC.
-// microvm.v1 provides HTTP/2 ingress to the Execution via Network.http_ingress_port.
-//
-// See ../README.md for the two-process overview and
-// ../../contracts/runtime-to-controlplane.md for the auth + reachability
-// story.
+// The subset of the in-guest sandbox-agent gRPC surface this backend calls.
+// Field numbers and names match the server; the RPCs and messages qm does not
+// use are omitted rather than reproduced.
 service SandboxAgentService {
-  // Exec runs a one-shot or streaming command inside the guest. Backs
-  // SandboxService.ExecInSandbox in non-PTY mode.
-  //
-  // Input stream: an initial ExecStart frame, then optional stdin bytes and
-  // signal frames. Output stream: stdout/stderr frames and a final exit
-  // frame. No PTY allocation.
   rpc Exec(stream ExecRequest) returns (stream ExecOutput);
-
-  // Shell allocates a PTY inside the guest and streams it. Backs
-  // SandboxService.ExecInSandbox in PTY mode and the public
-  // HarnessAPI.ShellInSandbox WebSocket.
-  rpc Shell(stream ShellRequest) returns (stream ShellOutput);
-
-  // Upload writes a file (or directory archive) into the guest filesystem.
-  // Streaming form: an UploadHeader frame followed by chunked payload frames
-  // and a final UploadEnd frame.
   rpc Upload(stream UploadRequest) returns (UploadResponse);
-
-  // Download reads a file (or directory archive) out of the guest filesystem.
   rpc Download(DownloadRequest) returns (stream DownloadChunk);
-
-  // ImportFromURL downloads an object from a presigned URL into the guest
-  // filesystem (single file write or tar extract). Used by sandboxsvc
-  // CommitUploadToSandbox for large transfers that bypass the control-plane
-  // byte proxy.
-  rpc ImportFromURL(ImportFromURLRequest) returns (ImportFromURLResponse);
-
-  // ExportToURL uploads a guest path (or directory tar) to object storage via an
-  // sandbox-agent driven multipart PUT where sandboxsvc streams presigned part URLs and
-  // gets back the part ETags and sha256. Used by sandboxsvc InitDownloadFromSandbox.
-  rpc ExportToURL(stream ExportToURLClientMsg) returns (stream ExportToURLServerMsg);
-
-  // Health is the readiness probe. sandbox-service polls this after microvm.v1
-  // reports MicroVMState.RUNNING to know when the guest is ready to accept
-  // traffic. Returns OK when sandbox-agent's listeners are up AND OHR (over
-  // the local socket) reports ready.
-  rpc Health(google.protobuf.Empty) returns (HealthResponse);
-
-  // StartChildProcess signals deferred guest services (OHR, otel-collector,
-  // hermes-gateway) to start. Environment is loaded from the microVM guest
-  // metadata API (GET http://169.254.169.254/metadata/v1/ → environment),
-  // which is where CreateMicroVM Environment is stored and remains correct
-  // after golden checkpoint restore. Interim bridge until microvm lifecycle
-  // hooks (execution_init / post_restore) ship — see MSANDBOX-211. Idempotent
-  // for the same SANDBOX_ID; if the start signal is from a prior sandbox
-  // (user checkpoint restore), refreshes envd from metadata without treating
-  // deferred services as newly started.
-  rpc StartChildProcess(StartChildProcessRequest) returns (StartChildProcessResponse);
-
-  // ProxyPort opens a bidirectional L4 tunnel to a TCP port on localhost inside
-  // the guest. Used by sandboxsvc ProxyGuestPort on microvm substrate where
-  // there is no external L4 path to arbitrary guest ports.
-  rpc ProxyPort(stream ProxyPortFrame) returns (stream ProxyPortFrame);
 }
-
-// ---------------------------------------------------------------------------
-// Exec (non-PTY): backs SandboxService.ExecInSandbox without a PTY
-// ---------------------------------------------------------------------------
 
 message ExecRequest {
   oneof request {
-    ExecStart  start  = 1;  // first frame
-    bytes      stdin  = 2;  // optional stdin bytes
-    ExecSignal signal = 3;  // SIGINT etc.
+    ExecStart start = 1;
+    bytes stdin = 2;
+    ExecSignal signal = 3;
   }
 }
 
 message ExecStart {
-  // argv[0] is the program; remaining elements are arguments. The guest does
-  // NOT spawn a shell unless the caller asks for one explicitly via
-  // argv = ["/bin/bash", "-c", "<cmd>"]. Avoids implicit shell-parsing
-  // surprises.
+  // argv[0] is the program. No shell is spawned unless the caller asks for
+  // one, so qm passes ["/bin/bash", "-c", command].
   repeated string argv = 1;
-
-  // Working directory inside the guest, e.g. "/workspace". Defaults to
-  // "/workspace" if unset.
   string workdir = 2;
-
-  // Extra environment variables (merged onto the sandbox-agent-provided
-  // baseline; sandbox-agent-internal vars are stripped before exec).
   map<string, string> env = 3;
-
-  // Hard timeout. 0 means no timeout. sandbox-agent enforces by sending
-  // SIGTERM then SIGKILL.
+  // Hard timeout; 0 means none. Enforced in the guest with SIGTERM then SIGKILL.
   int64 timeout_seconds = 4;
 }
 
 message ExecSignal {
-  // POSIX signal number, e.g. 2 for SIGINT.
   int32 signal = 1;
 }
 
 message ExecOutput {
   oneof output {
-    bytes    stdout = 1;
-    bytes    stderr = 2;
-    ExecExit exit   = 3;  // final frame
+    bytes stdout = 1;
+    bytes stderr = 2;
+    ExecExit exit = 3;
   }
 }
 
 message ExecExit {
   int32 exit_code = 1;
   int64 duration_ms = 2;
-
-  // sandbox-agent sets this when an in-guest HITL check rejected the command.
-  // exit_code is conventionally -1 in this case. sandbox-service surfaces it
-  // on SandboxService.ExecExit.hitl_rejected so the public API can report it.
-  bool hitl_rejected = 3;
-
-  // sandbox-agent sets this when the timeout fired.
-  bool timed_out = 4;
-}
-
-// ---------------------------------------------------------------------------
-// Shell (PTY): backs SandboxService.ExecInSandbox in PTY mode and
-// HarnessAPI.ShellInSandbox WebSocket.
-// ---------------------------------------------------------------------------
-
-message ShellRequest {
-  oneof request {
-    ShellStart  start  = 1;  // first frame
-    bytes       stdin  = 2;  // user keystrokes
-    ShellResize resize = 3;  // window resize
-    ExecSignal  signal = 4;  // SIGINT on ctrl-C (reuses ExecSignal shape)
-  }
-}
-
-message ShellStart {
-  // argv[0] is typically "/bin/bash" or "/bin/zsh". If empty, sandbox-agent
-  // picks the guest's default user shell.
-  repeated string argv = 1;
-
-  string workdir = 2;
-  map<string, string> env = 3;
-
-  uint32 rows = 4;
-  uint32 cols = 5;
-
-  // Hard timeout in seconds. 0 means no timeout (interactive shells
-  // typically use 0 and rely on client disconnect).
-  int64 timeout_seconds = 6;
-
-  // TERM value. Defaults to "xterm-256color".
-  string term = 7;
-}
-
-message ShellResize {
-  uint32 rows = 1;
-  uint32 cols = 2;
-}
-
-message ShellOutput {
-  oneof output {
-    bytes     pty_output = 1;  // merged stdout+stderr from the PTY
-    ShellExit exit       = 2;  // final frame
-  }
-}
-
-message ShellExit {
-  int32 exit_code = 1;
-  int64 duration_ms = 2;
+  // Set when an in-guest approval check rejected the command; exit_code is -1.
   bool hitl_rejected = 3;
   bool timed_out = 4;
 }
-
-// ---------------------------------------------------------------------------
-// Upload / Download
-// ---------------------------------------------------------------------------
 
 message UploadRequest {
   oneof request {
-    UploadHeader header = 1;  // first frame
-    bytes        chunk  = 2;  // payload bytes
-    UploadEnd    end    = 3;  // final frame; commits the upload
+    UploadHeader header = 1;
+    bytes chunk = 2;
+    UploadEnd end = 3;
   }
 }
 
 message UploadHeader {
-  // Absolute path inside the guest, e.g. "/workspace/foo.txt". The parent
-  // directory must exist or be creatable under workdir-relative semantics.
+  // Absolute path inside the guest. Transfer is confined to the workspace root.
   string path = 1;
-
-  // POSIX mode (e.g. 0o644). Zero means "use the sandbox-agent default"
-  // (0o644 for files, 0o755 for directories).
+  // POSIX mode; zero takes the guest default.
   uint32 mode = 2;
-
-  // True if the payload is a tar archive that sandbox-agent should extract
-  // under `path`. False if the payload is a single file to be written at
-  // `path`.
+  // True when the payload is a tar archive to extract under path.
   bool is_archive = 3;
 }
 
 message UploadEnd {
-  // Optional SHA-256 of the full payload (hex). If set, sandbox-agent
-  // verifies and fails the upload on mismatch.
+  // Optional hex SHA-256 of the payload; the guest fails the upload on mismatch.
   string sha256 = 1;
 }
 
 message UploadResponse {
-  // Absolute path inside the guest that was written (or, for archives, the
-  // root extraction directory).
   string path = 1;
   int64 bytes_written = 2;
 }
 
 message DownloadRequest {
-  // Absolute path inside the guest to read.
   string path = 1;
-
-  // True to tar-stream a directory at `path`. False for a single file.
   bool as_archive = 2;
-
-  // Read buffer size for single-file downloads, in bytes. Zero uses the
-  // sandbox-agent default (256 KiB). Values outside the allowed range are rejected.
+  // Read buffer size in bytes; zero takes the guest default.
   uint32 chunk_size_bytes = 3;
 }
 
 message DownloadChunk {
   oneof output {
-    DownloadHeader header = 1;  // first frame
-    bytes          chunk  = 2;  // payload bytes
-    DownloadEnd    end    = 3;  // final frame
+    DownloadHeader header = 1;
+    bytes chunk = 2;
+    DownloadEnd end = 3;
   }
 }
 
 message DownloadHeader {
-  int64 size_bytes = 1;  // -1 if unknown (e.g. streaming archive)
+  // -1 when unknown, as for a streaming archive.
+  int64 size_bytes = 1;
   bool is_archive = 2;
 }
 
 message DownloadEnd {
   string sha256 = 1;
 }
-
-// ---------------------------------------------------------------------------
-// ImportFromURL / ExportToURL (presigned URL transfers)
-// ---------------------------------------------------------------------------
-
-message ImportFromURLRequest {
-  // Presigned GET URL (https). sandbox-agent streams the body into the guest.
-  string url = 1;
-  // Absolute path inside the guest, e.g. "/workspace/foo.txt".
-  string path = 2;
-  // True if the object is a tar archive to extract under path.
-  bool is_archive = 3;
-  // Optional SHA-256 of the full payload (hex). Verified after download.
-  string sha256 = 4;
-  // Optional expected Content-Length. When set, mismatch fails the import.
-  int64 expected_size_bytes = 5;
-}
-
-message ImportFromURLResponse {
-  string path = 1;
-  int64 bytes_written = 2;
-  string sha256 = 3;
-}
-
-// ExportToURLClientMsg is sent by sandboxsvc (the client end) to drive the
-// agent's multipart export, starting with an ExportConfig and then one
-// ExportPartURL in response to each ExportPartURLRequest the agent sends.
-message ExportToURLClientMsg {
-  oneof msg {
-    ExportConfig config = 1;
-    ExportPartURL part_url = 2;
-  }
-}
-
-// ExportToURLServerMsg is sent by the agent (the server end) with one
-// ExportPartURLRequest per part it wants to upload, then a final ExportResult.
-message ExportToURLServerMsg {
-  oneof msg {
-    ExportPartURLRequest part_url_request = 1;
-    ExportResult result = 2;
-  }
-}
-
-// ExportConfig is the first frame sandboxsvc sends; it tells the agent what to
-// read and how large each multipart part must be.
-message ExportConfig {
-  // Absolute path inside the guest to read.
-  string path = 1;
-  // True to tar a directory at path into the upload body.
-  bool as_archive = 2;
-  // Multipart part size in bytes. Every part except the last is exactly this
-  // size; must satisfy the S3/Spaces minimum (5 MiB).
-  int64 part_size = 3;
-}
-
-// ExportPartURLRequest is sent by the agent when it is ready to upload a part.
-message ExportPartURLRequest {
-  int32 part_number = 1;
-}
-
-// ExportPartURL is sandboxsvc's reply with a presigned PUT URL for that one part.
-message ExportPartURL {
-  int32 part_number = 1;
-  string url = 2;
-}
-
-// ExportPart is one uploaded part's number and the ETag returned by object
-// storage, collected so sandboxsvc can CompleteMultipartUpload.
-message ExportPart {
-  int32 part_number = 1;
-  string etag = 2;
-}
-
-// ExportResult is the agent's final frame after the last part is uploaded.
-message ExportResult {
-  repeated ExportPart parts = 1;
-  // SHA-256 (hex) of the full payload the agent uploaded.
-  string sha256 = 2;
-  int64 bytes_written = 3;
-}
-
-// ---------------------------------------------------------------------------
-// Health
-// ---------------------------------------------------------------------------
-
-message HealthResponse {
-  // OK once sandbox-agent can reach envd (listeners up / Ping succeeds).
-  // Does not wait on OHR; deferred OHR start is signaled via StartChildProcess.
-  HealthStatus status = 1;
-
-  // Free-form detail useful in logs / ops. Not a stable contract.
-  string detail = 2;
-
-  reserved 3;
-  reserved "ohr_status";
-}
-
-enum HealthStatus {
-  HEALTH_STATUS_UNSPECIFIED = 0;
-  HEALTH_STATUS_OK          = 1;
-  HEALTH_STATUS_STARTING    = 2;
-  HEALTH_STATUS_DEGRADED    = 3;
-  HEALTH_STATUS_FAILED      = 4;
-}
-
-// ---------------------------------------------------------------------------
-// StartChildProcess (deferred OHR start; interim until lifecycle hooks)
-// ---------------------------------------------------------------------------
-
-// Empty today: env comes from guest metadata only. Kept as a dedicated
-// message so future start parameters can land without an RPC signature change.
-message StartChildProcessRequest {}
-
-message StartChildProcessResponse {
-  // True when this call created the start signal; false when the child was
-  // already signaled (idempotent replay).
-  bool started = 1;
-}
-
-// ---------------------------------------------------------------------------
-// ProxyPort (bidirectional L4 tunnel to localhost inside the guest)
-// ---------------------------------------------------------------------------
-
-message ProxyPortFrame {
-  oneof frame {
-    ProxyPortOpen open = 1; // client → server, must be first frame
-    bytes data = 2; // payload both directions
-    ProxyPortClose close = 3; // clean shutdown
-  }
-}
-
-message ProxyPortOpen {
-  uint32 port = 1;
-}
-
-message ProxyPortClose {
-  string message = 1;
-}
-
