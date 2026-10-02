@@ -33,7 +33,10 @@ Two planes, two credentials' worth of surface area collapsed into one:
 
 - **Control plane** — plain HTTPS against `api.digitalocean.com/v2/agents/sessions`, bearer-authed
   with the IAM token. Create, list, pause, resume, destroy. Sessions are declared with a flat
-  YAML manifest (`agents.digitalocean.com/flat.v1`).
+  YAML manifest (`agents.digitalocean.com/flat.v1`) that says `agent: none`, which asks MARS for a
+  **bare sandbox**: a microVM with no managed coding agent in it, which is what QM wants because
+  QM already has its own loop. Verified: no agent binary on `PATH`, no agent supervisor process,
+  just `sandbox-agent`, `envd`, `otelcol` and s6.
 - **Data plane** — a WebSocket port-forward at
   `wss://api.digitalocean.com/v2/agents/sessions/{id}/port-forward/8443`, bridged to a local TCP
   listener, with a gRPC client speaking `SandboxAgentService` over it. That service gives us
@@ -146,18 +149,18 @@ Nothing about the MARS backend changes QM's own deployment story — follow the 
 
 ### Configuration
 
-| Variable                     | Required | Meaning                                                         |
-| ---------------------------- | -------- | --------------------------------------------------------------- |
-| `MARS_API_TOKEN`             | yes      | DigitalOcean IAM token; also carries team identity              |
-| `MARS_API_BASE_URL`          | no       | Defaults to `https://api.digitalocean.com`                      |
-| `MARS_TEMPLATE`              | no       | Guest image. Unset means MARS derives it from the agent kind    |
-| `MARS_NAME_PREFIX`           | no       | Prefix for session names, useful for telling environments apart |
-| `MARS_SIZE_SLUG`             | no       | microVM size                                                    |
-| `MARS_IDLE_TIMEOUT_SEC`      | no       | How long an idle session survives before MARS reclaims it       |
-| `MARS_EGRESS_PROXY_URL`      | no       | Egress proxy the session allowlist is narrowed to               |
-| `MARS_SNAPSHOT_S3_BUCKET`    | no       | Portable home snapshots                                         |
-| `MARS_SNAPSHOT_INTERVAL_SEC` | no       | How often to snapshot the home                                  |
-| `SANDBOX_TIMEOUT_SEC`        | no       | Shared default command timeout                                  |
+| Variable                     | Required | Meaning                                                          |
+| ---------------------------- | -------- | ---------------------------------------------------------------- |
+| `MARS_API_TOKEN`             | yes      | DigitalOcean IAM token; also carries team identity               |
+| `MARS_API_BASE_URL`          | no       | Defaults to `https://api.digitalocean.com`                       |
+| `MARS_TEMPLATE`              | no       | Template override; unset means the bare base `agent: none` picks |
+| `MARS_NAME_PREFIX`           | no       | Prefix for session names, useful for telling environments apart  |
+| `MARS_SIZE_SLUG`             | no       | microVM size                                                     |
+| `MARS_IDLE_TIMEOUT_SEC`      | no       | How long an idle session survives before MARS reclaims it        |
+| `MARS_EGRESS_PROXY_URL`      | no       | Egress proxy the session allowlist is narrowed to                |
+| `MARS_SNAPSHOT_S3_BUCKET`    | no       | Portable home snapshots                                          |
+| `MARS_SNAPSHOT_INTERVAL_SEC` | no       | How often to snapshot the home                                   |
+| `SANDBOX_TIMEOUT_SEC`        | no       | Shared default command timeout                                   |
 
 ## Verifying a deployment
 
@@ -198,7 +201,7 @@ from the worktree `.env`, so `MARS_API_TOKEN` has to be exported.
 - The guest's `/workspace` is the only writable root for file transfer, so QM's home directory
   lives at `/workspace/home` rather than the usual `/home/user`. This also puts the home inside
   the persistent workspace volume, so it survives pause and resume.
-- The stock guest image carries `bash`, `git`, `node`, and `python3`, but not `rg` or `jq`, which
+- The bare base image carries `bash`, `git`, `node`, and `python3`, but not `rg` or `jq`, which
   agent prompts commonly reach for. A custom `MARS_TEMPLATE` is the fix.
 - MARS checkpoints are a public API, but this backend does not use them; it relies on session
   pause plus optional S3 home snapshots instead. The reasoning is in the ADR.

@@ -58,11 +58,31 @@ async function main(): Promise<void> {
     );
     log(tools.stdout.trim());
 
-    log("checking a command survives past the 4-minute REST exec clamp...");
-    const long = await sandbox.run(handle, "sleep 250; echo past-the-clamp", { timeoutMs: 400_000 });
-    assert.equal(long.code, 0, `long run exited ${long.code}: ${long.stderr}`);
-    assert.match(long.stdout, /past-the-clamp/);
-    log("250s command completed over the tunnel");
+    log("checking the guest carries no managed coding agent...");
+    const bare = await sandbox.run(
+      handle,
+      "for t in codex claude opencode cursor hermes; do command -v $t >/dev/null && echo AGENT_ON_PATH=$t; done; test -e /opt/ohr && echo OHR_PRESENT; pgrep -x brightstaff >/dev/null && echo BRIGHTSTAFF_RUNNING; echo ---; ps -eo comm= | sort -u | tr '\\n' ' '",
+    );
+    log("guest:", bare.stdout.trim());
+    assert.doesNotMatch(bare.stdout, /AGENT_ON_PATH=/, "a bare sandbox must carry no agent CLI");
+    assert.doesNotMatch(bare.stdout, /OHR_PRESENT/, "a bare sandbox must not ship /opt/ohr");
+    assert.doesNotMatch(bare.stdout, /BRIGHTSTAFF_RUNNING/, "a bare sandbox must not run the agent supervisor");
+
+    log("checking the workspace survives a pause and resume...");
+    await sandbox.run(handle, "echo persisted > survives-pause.txt");
+    await sandbox.teardown(handle, {});
+    const resumed = await sandbox.provision(layers, { env: { QM_SMOKE: "1" } });
+    const after = await sandbox.run(resumed, "cat survives-pause.txt");
+    assert.match(after.stdout, /persisted/, "the workspace did not survive a pause and resume");
+    log("workspace intact after pause and resume");
+
+    if (process.env.MARS_SMOKE_LONG === "1") {
+      log("checking a command survives past the 4-minute REST exec clamp...");
+      const long = await sandbox.run(resumed, "sleep 250; echo past-the-clamp", { timeoutMs: 400_000 });
+      assert.equal(long.code, 0, `long run exited ${long.code}: ${long.stderr}`);
+      assert.match(long.stdout, /past-the-clamp/);
+      log("250s command completed over the tunnel");
+    }
 
     log("ALL CHECKS PASSED");
   } finally {

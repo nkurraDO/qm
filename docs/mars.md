@@ -5,12 +5,11 @@ persistent home, file transfers, and background process sessions. Paused
 sessions resume on use.
 
 MARS normally runs its own agent loop inside the microVM. Core does not use it.
-A session is created from a manifest that names a template explicitly, which
-decouples it from MARS's agent-kind gate: the template names the environment
-and the agent kind only selects which adapter, if any, runs inside it. Point it
-at a template with no coding agent and you get a bare sandbox — no managed
-agent, no Open Harness Runtime, no Open Harness Pulse event stream. The agent
-stays in core, exactly as it does for every other backend. See
+The session manifest says `agent: none`, which MARS admits as a bare sandbox:
+it lands on MARS's own base template with no managed agent, no Open Harness
+Runtime, no Open Harness Pulse event stream, and no model credential. Core
+drives the microVM itself over exec and workspace transfer, so the agent stays
+in core exactly as it does for every other backend. See
 [the design record](../adrs/mars-sandbox-backend.md) for why.
 
 ## Configure
@@ -18,7 +17,6 @@ stays in core, exactly as it does for every other backend. See
 ```sh
 SANDBOX_BACKEND=mars
 MARS_API_TOKEN=dop_v1_your-digitalocean-iam-token
-MARS_TEMPLATE=base
 MARS_NAME_PREFIX=my-qm
 MARS_SNAPSHOT_S3_BUCKET=my-qm-sandbox-homes
 ```
@@ -59,18 +57,18 @@ able to reach core's public API for the connector SDK and file callbacks.
 
 ## Settings
 
-| Variable                     | Default                        | Purpose                                                         |
-| ---------------------------- | ------------------------------ | --------------------------------------------------------------- |
-| `MARS_API_TOKEN`             | Required                       | DigitalOcean IAM token, held by core.                           |
-| `MARS_API_BASE_URL`          | `https://api.digitalocean.com` | harness-api endpoint override; any path prefix is preserved.    |
-| `MARS_TEMPLATE`              | `base`                         | Sandbox template. Naming one bypasses the agent-kind gate.      |
-| `MARS_NAME_PREFIX`           | `qm`                           | Namespace for scope discovery.                                  |
-| `MARS_SIZE_SLUG`             | Provider default               | microVM size.                                                   |
-| `MARS_IDLE_TIMEOUT_SEC`      | Provider default               | Provider-side idle pause backstop when no core is sweeping.     |
-| `MARS_EGRESS_PROXY_URL`      | Unset                          | Proxy host to allow; everything else is denied.                 |
-| `MARS_SNAPSHOT_S3_BUCKET`    | Unset                          | Portable home tars. Without it the backend reports no recovery. |
-| `MARS_SNAPSHOT_INTERVAL_SEC` | `300`                          | Snapshot throttle.                                              |
-| `SANDBOX_TIMEOUT_SEC`        | `600`                          | Default command deadline in seconds.                            |
+| Variable                     | Default                        | Purpose                                                           |
+| ---------------------------- | ------------------------------ | ----------------------------------------------------------------- |
+| `MARS_API_TOKEN`             | Required                       | DigitalOcean IAM token, held by core.                             |
+| `MARS_API_BASE_URL`          | `https://api.digitalocean.com` | harness-api endpoint override; any path prefix is preserved.      |
+| `MARS_TEMPLATE`              | Provider bare base             | Template override; unset means the bare base `agent: none` picks. |
+| `MARS_NAME_PREFIX`           | `qm`                           | Namespace for scope discovery.                                    |
+| `MARS_SIZE_SLUG`             | Provider default               | microVM size.                                                     |
+| `MARS_IDLE_TIMEOUT_SEC`      | Provider default               | Provider-side idle pause backstop when no core is sweeping.       |
+| `MARS_EGRESS_PROXY_URL`      | Unset                          | Proxy host to allow; everything else is denied.                   |
+| `MARS_SNAPSHOT_S3_BUCKET`    | Unset                          | Portable home tars. Without it the backend reports no recovery.   |
+| `MARS_SNAPSHOT_INTERVAL_SEC` | `300`                          | Snapshot throttle.                                                |
+| `SANDBOX_TIMEOUT_SEC`        | `600`                          | Default command deadline in seconds.                              |
 
 Session names are derived from the scope and the name prefix, so an operator
 can find a scope's microVM in the MARS console without consulting core's

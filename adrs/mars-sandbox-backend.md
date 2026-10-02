@@ -2,7 +2,7 @@
 
 Naveen, from the MARS team at DigitalOcean. MARS (Managed Agent Runtime Stack) hosts coding agents in DO-managed Firecracker microVMs. We looked at what it would take for qm to run on it and the answer is the same one Agent37 arrived at: the part of qm that wants hosting is the agent computer, so this is another sandbox backend, next to E2B, Modal, Sprites, smolmachines, Porter, AWS, Superserve and Agent37.
 
-The reason this is worth doing at all is that MARS is a managed-loop product by default — it boots Claude Code or OpenCode _inside_ the microVM, next to a process called OHR that translates events back to our control plane. That is not what qm wants, because qm already has a loop. But our platform has a second mode for exactly this case. A session that names a sandbox template explicitly is decoupled from the agent-kind gate entirely: the template names the environment, and the agent kind only selects which adapter, if any, runs inside it. Name a template with no coding agent and you get a bare sandbox — no managed agent, no OHR, no OHP. We wrote that mode for OpenAI, whose Agents API wanted DO microVMs under someone else's brain; our design doc calls it "the architectural inversion." qm lands in the same seat. Nothing about qm's orchestrator, harness router or tool surface has to change.
+The reason this is worth doing at all is that MARS is a managed-loop product by default — it boots Claude Code or OpenCode _inside_ the microVM, next to a process called OHR that translates events back to our control plane. That is not what qm wants, because qm already has a loop. But our platform now admits a session with no agent in it at all: a manifest that says `agent: none` lands on MARS's own bare base template, with no managed agent, no OHR, no OHP, and no model credential. The caller drives the microVM itself over exec, workspace transfer and port-forward. That mode exists for customers who want MARS purely for code execution — evaluations, CI-style fan-out, arbitrary compute — and qm lands in the same seat. Nothing about qm's orchestrator, harness router or tool surface has to change.
 
 ```mermaid
 flowchart LR
@@ -10,7 +10,7 @@ flowchart LR
     M1["microVM"] --> M2["Claude Code / OpenCode"] --> M3["OHR"] --> M4["OHP data plane"] --> M5["doctl attach"]
   end
 
-  subgraph INVERTED["explicit bare template: what qm uses"]
+  subgraph INVERTED["agent: none -- what qm uses"]
     Q1["qm core<br/>orchestrator + vendored harness"] --> Q2["the loop stays here"]
     Q2 --> Q3["microVM<br/>bare sandbox, no agent, no OHR"]
   end
@@ -37,7 +37,7 @@ sequenceDiagram
 
   Note over O,B: provision
   O->>B: provision layers for scope
-  B->>E: POST /v2/agents/sessions<br/>agents.yaml: template, name, permissions, egress
+  B->>E: POST /v2/agents/sessions<br/>agents.yaml: name, agent: none, permissions, egress
   Note right of E: validates DO IAM token,<br/>forwards team + user headers
   E->>H: CreateSession
   H->>V: sandboxsvc + microvm.v1<br/>internal, not qm's concern
@@ -83,12 +83,12 @@ What it does not do
 
 - No provider checkpoints, though not for the reason you might expect. We do expose session checkpoints publicly — `POST /v2/agents/sessions/{id}/checkpoints` is synchronous and returns a terminal checkpoint — along with list, rollback and fork. This backend simply does not use them yet, so it gets native pause and falls back to your portable tar home snapshot for recovery, under `MARS_SNAPSHOT_INTERVAL_SEC` and `MARS_SNAPSHOT_S3_BUCKET`. Moving to native checkpoints, the way the Sprites backend reports `provider_snapshot`, is a clean follow-up. The one thing to check first is that our checkpoints bind machine state to the event-log cursor and refuse during an active turn, both of which are managed-loop concepts that need verifying against a session that has no turns.
 - No idle reaping from qm's side. Our control plane owns the idle timeout, set per session with `MARS_IDLE_TIMEOUT_SEC` and bounded by tenant policy. Paused sessions still count against team quota, which is worth knowing before pointing a large deployment at us.
-- No image plumbing. `MARS_TEMPLATE` names a template already provisioned for the team; an unprovisioned name fails session create. Building a qm-flavoured template, so the layer tool install step finds its files already present, is a follow-up and not in this PR.
+- No image plumbing. `agent: none` lands on our own bare base template, so `MARS_TEMPLATE` is an override rather than a requirement; set it only to name a template already provisioned for the team, because an unprovisioned name fails session create. Building a qm-flavoured template, so the layer tool install step finds its files already present, is a follow-up and not in this PR.
 - No new CLI target. `qm init` still deploys core to Docker, Fly or AWS. This only changes where the computers live.
 
 Two things we need from you, or at least need to agree on
 
 - Reachability runs both ways. qm needs to reach `api.digitalocean.com` and nothing else, which is the easy direction. But qm's sandboxes also call _back_ into core's self-API with their capability tokens, the way the E2B backend needs a public `PUBLIC_API_URL`. That means core's public URL has to be on the session's egress allowlist. For a qm deployment inside DO this is fine; for one on Fly or AWS it means our allowlist has to carry an arbitrary external host, which we should confirm is acceptable to your operators and ours.
-- A bare template has to exist for your team. `MARS_TEMPLATE` names a template already provisioned for the team, and naming one is what keeps the managed agent out of the microVM. Our `base` image carries `sandbox-agent`, `envd`, Python, Node and `gh` and nothing agent-shaped, which is the right starting point, but we should agree on which template qm deployments actually get and who keeps it current. An unprovisioned name fails session create, so this is a hard prerequisite rather than a tuning knob.
+- We should agree on what the bare base carries. `agent: none` removed the prerequisite that used to sit here: no template has to be provisioned for your team, and we verified the guest is genuinely bare — no agent CLI on `PATH`, no `/opt/ohr`, no supervisor process, just `sandbox-agent`, `envd`, `otelcol` and s6. What it also lacks is `rg` and `jq`, which qm's agent prompts reach for by name. Python, Node and `git` are present. Either we add the small tools to the base or qm deployments want a template of their own, and we should decide which before this carries real traffic.
 
 Tests run against an in-process harness-api, a real gRPC `sandbox-agent` and a WebSocket tunnel between them, so the transport is exercised end to end and CI needs no DO account and no credentials. We would rather this live upstream than in a fork, and we will keep it green as the sandbox contract moves.

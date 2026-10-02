@@ -96,7 +96,7 @@ export interface SdkMarsClientOptions {
 
 const DEFAULT_API_BASE_URL = "https://api.digitalocean.com";
 const DEFAULT_TEMPLATE = "";
-const DEFAULT_AGENT = "codex";
+const DEFAULT_AGENT = "none";
 const DEFAULT_MAX_COMMAND_MS = 3600_000;
 const CREATE_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -144,7 +144,6 @@ export function marsManifest(opts: {
 }): string {
   const lines = [`name: ${JSON.stringify(opts.name)}`, `agent: ${JSON.stringify(opts.agent ?? DEFAULT_AGENT)}`];
   if (opts.template) lines.push(`template: ${JSON.stringify(opts.template)}`);
-  lines.push("persistent_workspace: true");
   if (opts.sizeSlug) lines.push(`size: ${JSON.stringify(opts.sizeSlug)}`);
   if (opts.idleTimeoutSec) lines.push(`idle_timeout: ${JSON.stringify(`${opts.idleTimeoutSec}s`)}`);
   if (opts.egressAllow?.length) {
