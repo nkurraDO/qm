@@ -116,6 +116,32 @@ lives at `/workspace/home` rather than the usual `/home/user`. That also places
 it inside the volume MARS preserves, so the home survives pause and resume on
 its own.
 
+### Pause and resume
+
+Both are automatic, and neither is a verb a user or the model can call.
+
+A scope pauses when its turn tears down. If a home snapshot is due the backend
+takes it first, then calls `POST /v2/agents/sessions/{id}/pause` and closes the
+tunnel. A pause that fails is not silent: the scope is recorded as
+`pause_failed` with the provider's error, which surfaces in the computer status
+and in error reporting. Two cases skip the pause — an internal `keepWarm`
+teardown, used when core knows another turn is imminent, and a teardown that
+destroys instead.
+
+A scope resumes the next time anything needs the guest. Provisioning polls the
+session, and on finding it paused issues `POST /resume` once and keeps polling
+until it reports usable, up to five minutes. So the resume is a side effect of
+the next command rather than a step anybody triggers; the only visible evidence
+is that the first command of a conversation takes a little longer.
+
+There is no manual pause or resume from QM. The `sandbox` tool's verbs are
+`list`, `create`, `set_default`, `status`, and `retire` — and for this backend
+`restart` is not offered either, because `mars` implements no `restartComputer`.
+What you can do is **observe** and **destroy**: `status` reports
+`lifecycleState: "paused"` along with the snapshot state and any
+`pause_failed` error, and `retire` deletes outright. If you want a scope to stop
+costing anything, retire it rather than looking for a pause button.
+
 ### Delete
 
 Teardown at the end of a turn **pauses**. Actual deletion happens in four places
