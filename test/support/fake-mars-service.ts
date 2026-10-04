@@ -30,6 +30,7 @@ export interface FakeMarsService {
   execScripts(): string[];
   home(): string;
   setStatus(name: string, status: string): void;
+  rejectPortForward(body: string | null): void;
   tunnelCount(): number;
   close(): Promise<void>;
 }
@@ -196,11 +197,18 @@ export async function startFakeMarsService(): Promise<FakeMarsService> {
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  let portForwardRejection: string | null = null;
   http.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const match = /^\/v2\/agents\/sessions\/([^/]+)\/port-forward\/(\d+)$/.exec(url.pathname);
     if (req.headers.authorization !== `Bearer ${token}` || !match) {
       socket.destroy();
+      return;
+    }
+    if (portForwardRejection !== null) {
+      socket.end(
+        `HTTP/1.1 403 Forbidden\r\nContent-Length: ${Buffer.byteLength(portForwardRejection)}\r\nConnection: close\r\n\r\n${portForwardRejection}`,
+      );
       return;
     }
     const row = rows.get(match[1] ?? "");
@@ -239,6 +247,9 @@ export async function startFakeMarsService(): Promise<FakeMarsService> {
     setStatus: (name, status) => {
       const row = byName(name);
       if (row) row.status = status;
+    },
+    rejectPortForward: (body) => {
+      portForwardRejection = body;
     },
     tunnelCount: () => tunnels,
     close: async () => {

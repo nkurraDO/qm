@@ -108,6 +108,20 @@ test("a command runs in the guest over the port-forward tunnel", async () => {
   assert.ok(service.tunnelCount() > 0, "exec must travel through the tunnel, not the REST exec endpoint");
 });
 
+test("a port-forward the edge refuses reads as gone, carrying the rejection, not as a half-run command", async () => {
+  const s = await session("qm-no-tunnel");
+  service.rejectPortForward("team is not entitled to port-forward");
+  const err = await s.runCommand("echo never-runs").then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assert.ok(err instanceof MarsSandboxGoneError, `expected a retryable gone error, got ${String(err)}`);
+  assert.match(err.message, /403/);
+  assert.match(err.message, /not entitled to port-forward/);
+  assert.doesNotMatch(err.message, /may have partially executed/);
+  service.rejectPortForward(null);
+});
+
 test("command env and working directory reach the guest", async () => {
   const s = await session("qm-env");
   const result = await s.runCommand("echo VAR=$MY_VAR", { env: { MY_VAR: "set-by-qm" } });

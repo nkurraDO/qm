@@ -105,6 +105,7 @@ const READY_POLL_MS = 2_000;
 const UPLOAD_CHUNK_BYTES = 256 * 1024;
 const DOWNLOAD_CHUNK_BYTES = 256 * 1024;
 const MAX_EXEC_OUTPUT_BYTES = 16 * 1024 * 1024;
+const CONNECT_TIMEOUT_MS = 30_000;
 const GRPC_NOT_FOUND = 5;
 const GRPC_UNAVAILABLE = 14;
 
@@ -215,6 +216,7 @@ interface SandboxAgent {
   Exec(): GrpcDuplex;
   Upload(cb: (err: unknown, res?: { bytes_written?: string }) => void): GrpcWritable;
   Download(req: unknown): GrpcReadable;
+  waitForReady(deadline: Date, cb: (err?: Error) => void): void;
   close(): void;
 }
 
@@ -244,7 +246,7 @@ function loadGrpc(): Promise<[ProtoLoader, Grpc]> {
   return grpcModules;
 }
 
-async function dialSandboxAgent(localPort: number): Promise<SandboxAgent> {
+async function dialSandboxAgent(localPort: number, readyTimeoutMs: number): Promise<SandboxAgent> {
   const [loader, grpc] = await loadGrpc();
   const definition = loader.loadSync(PROTO_PATH, {
     keepCase: true,
@@ -273,10 +275,19 @@ async function dialSandboxAgent(localPort: number): Promise<SandboxAgent> {
     };
   };
   const Service = pkg.do.teams.hosted_agents.runtime.sandbox_agent.v1.SandboxAgentService;
-  return new Service(`127.0.0.1:${localPort}`, grpc.credentials.createInsecure(), {
+  const agent = new Service(`127.0.0.1:${localPort}`, grpc.credentials.createInsecure(), {
     "grpc.max_receive_message_length": MAX_EXEC_OUTPUT_BYTES,
     "grpc.max_send_message_length": MAX_EXEC_OUTPUT_BYTES,
   });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      agent.waitForReady(new Date(Date.now() + readyTimeoutMs), (err?: Error) => (err ? reject(err) : resolve()));
+    });
+  } catch (e) {
+    agent.close();
+    throw e;
+  }
+  return agent;
 }
 
 export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
@@ -366,6 +377,7 @@ export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
   function buildSession(info: MarsSessionInfo): MarsSession {
     const sessionId = info.sessionId;
     let guest: Promise<{ tunnel: MarsTunnel; agent: SandboxAgent }> | null = null;
+    let lastTunnel: MarsTunnel | null = null;
 
     const connect = (): Promise<{ tunnel: MarsTunnel; agent: SandboxAgent }> =>
       (guest ??= (async () => {
@@ -375,11 +387,19 @@ export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
           remotePort: SANDBOX_AGENT_PORT,
           getToken: async () => opts.apiToken,
         });
+        lastTunnel = tunnel;
         try {
-          return { tunnel, agent: await dialSandboxAgent(tunnel.localPort) };
+          const dial = dialSandboxAgent(tunnel.localPort, CONNECT_TIMEOUT_MS);
+          const abort = tunnel.whenFailed().then((detail) => {
+            throw new Error(detail);
+          });
+          dial.catch(() => undefined);
+          abort.catch(() => undefined);
+          return { tunnel, agent: await Promise.race([dial, abort]) };
         } catch (e) {
+          const detail = tunnel.lastFailure() ?? errMessage(e);
           await tunnel.close();
-          throw e;
+          throw new MarsSandboxGoneError(sessionId, `guest unreachable over the port-forward: ${detail}`);
         }
       })().catch((e: unknown) => {
         guest = null;
@@ -398,13 +418,7 @@ export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
         .catch(() => undefined);
     }
 
-    const guestDetail = async (err: unknown): Promise<string> => {
-      const tunnelFailure = await guest
-        ?.then(({ tunnel }) => tunnel.lastFailure())
-        .catch(() => null)
-        .then((v) => v ?? null);
-      return tunnelFailure ?? errMessage(err);
-    };
+    const guestDetail = (err: unknown): string => lastTunnel?.lastFailure() ?? errMessage(err);
 
     return {
       sessionId,
@@ -441,14 +455,13 @@ export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
 
           stream.on("error", ((err: unknown) => {
             settle(() => {
+              const detail = guestDetail(err);
               void disconnect();
-              void guestDetail(err).then((detail) => {
-                reject(
-                  isGuestGone(err)
-                    ? new MarsCommandLostError(sessionId, detail)
-                    : new Error(`mars exec failed: ${detail}`),
-                );
-              });
+              reject(
+                isGuestGone(err)
+                  ? new MarsCommandLostError(sessionId, detail)
+                  : new Error(`mars exec failed: ${detail}`),
+              );
             });
           }) as (arg: never) => void);
 
@@ -498,13 +511,12 @@ export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
                 resolve(null);
                 return;
               }
+              const detail = guestDetail(err);
               void disconnect();
-              void guestDetail(err).then((detail) =>
-                reject(
-                  grpcCode(err) === GRPC_UNAVAILABLE
-                    ? new MarsSandboxGoneError(sessionId, detail)
-                    : new Error(`mars download ${absPath} failed: ${detail}`),
-                ),
+              reject(
+                grpcCode(err) === GRPC_UNAVAILABLE
+                  ? new MarsSandboxGoneError(sessionId, detail)
+                  : new Error(`mars download ${absPath} failed: ${detail}`),
               );
             });
           }) as (arg: never) => void);
@@ -522,13 +534,12 @@ export function createSdkMarsClient(opts: SdkMarsClientOptions): MarsClient {
               resolve();
               return;
             }
+            const detail = guestDetail(err);
             void disconnect();
-            void guestDetail(err).then((detail) =>
-              reject(
-                isGuestGone(err)
-                  ? new MarsSandboxGoneError(sessionId, detail)
-                  : new Error(`mars upload ${absPath} failed: ${detail}`),
-              ),
+            reject(
+              isGuestGone(err)
+                ? new MarsSandboxGoneError(sessionId, detail)
+                : new Error(`mars upload ${absPath} failed: ${detail}`),
             );
           });
           stream.write({ header: { path: absPath, mode: 0o644, is_archive: false } });

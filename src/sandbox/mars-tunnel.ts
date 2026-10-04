@@ -12,6 +12,7 @@ const REJECTION_BODY_MAX = 300;
 export interface MarsTunnel {
   readonly localPort: number;
   lastFailure(): string | null;
+  whenFailed(): Promise<string>;
   close(): Promise<void>;
 }
 
@@ -45,6 +46,14 @@ export async function openMarsTunnel(opts: MarsTunnelOptions): Promise<MarsTunne
   const sockets = new Set<Socket>();
   let failure: string | null = null;
   let closed = false;
+  let announceFailure: (detail: string) => void = () => undefined;
+  const failed = new Promise<string>((resolve) => {
+    announceFailure = resolve;
+  });
+  const fail = (detail: string): void => {
+    failure = detail;
+    announceFailure(detail);
+  };
 
   const bridge = (local: Socket): void => {
     sockets.add(local);
@@ -66,7 +75,7 @@ export async function openMarsTunnel(opts: MarsTunnelOptions): Promise<MarsTunne
             body += chunk.toString("utf8");
           });
           res.on("end", () => {
-            failure = `${res.statusCode ?? 0} ${body.trim().slice(0, REJECTION_BODY_MAX)}`.trim();
+            fail(`${res.statusCode ?? 0} ${body.trim().slice(0, REJECTION_BODY_MAX)}`.trim());
             local.destroy();
           });
         });
@@ -93,12 +102,12 @@ export async function openMarsTunnel(opts: MarsTunnelOptions): Promise<MarsTunne
             code === TUNNEL_CLOSE_GUEST_DIAL_FAILED ||
             code === TUNNEL_CLOSE_UPSTREAM_ERROR
           )
-            failure = `close ${code} ${reason.toString("utf8")}`.trim();
+            fail(`close ${code} ${reason.toString("utf8")}`.trim());
           local.destroy();
         });
 
         ws.on("error", (err: Error) => {
-          if (!rejected) failure = err.message;
+          if (!rejected) fail(err.message);
           local.destroy();
         });
 
@@ -108,7 +117,7 @@ export async function openMarsTunnel(opts: MarsTunnelOptions): Promise<MarsTunne
         local.on("error", () => ws.close());
       })
       .catch((err: unknown) => {
-        failure = err instanceof Error ? err.message : String(err);
+        fail(err instanceof Error ? err.message : String(err));
         local.destroy();
       });
   };
@@ -123,6 +132,7 @@ export async function openMarsTunnel(opts: MarsTunnelOptions): Promise<MarsTunne
   return {
     localPort: address.port,
     lastFailure: () => failure,
+    whenFailed: () => failed,
     close: async () => {
       closed = true;
       for (const socket of sockets) socket.destroy();
