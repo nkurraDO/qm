@@ -103,6 +103,8 @@ const CREATE_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const READY_TIMEOUT_MS = 300_000;
 const READY_POLL_MS = 2_000;
+const READY_FAST_POLL_MS = 250;
+const READY_FAST_WINDOW_MS = 10_000;
 const STALL_PROBE_MS = 45_000;
 const READY_TRANSIENT_LIMIT = 5;
 const UPLOAD_CHUNK_BYTES = 256 * 1024;
@@ -374,7 +376,8 @@ export function createSdkManagedAgentsClient(opts: SdkManagedAgentsClientOptions
   };
 
   async function awaitUsable(sessionId: string): Promise<ManagedAgentsSessionInfo> {
-    const deadline = Date.now() + READY_TIMEOUT_MS;
+    const started = Date.now();
+    const deadline = started + READY_TIMEOUT_MS;
     let resumed = false;
     let strikes = 0;
     const tolerate = (err: unknown): void => {
@@ -405,7 +408,9 @@ export function createSdkManagedAgentsClient(opts: SdkManagedAgentsClientOptions
       }
       if (Date.now() >= deadline)
         throw new Error(`do-managed-agents session ${sessionId} did not become ready within ${READY_TIMEOUT_MS}ms`);
-      await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Date.now() - started < READY_FAST_WINDOW_MS ? READY_FAST_POLL_MS : READY_POLL_MS),
+      );
     }
   }
 

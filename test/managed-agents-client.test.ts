@@ -166,6 +166,16 @@ test("a missing file reads as null rather than an error", async () => {
   assert.equal(await s.readFileBytes("/home/user/nope.txt"), null);
 });
 
+test("resuming a paused session does not wait out a fixed poll interval", async () => {
+  const created = await session("qm-resume-latency");
+  service.setStatus("qm-resume-latency", "SESSION_STATUS_PAUSED");
+  const started = Date.now();
+  const back = await client.connect(created.sessionId);
+  opened.push(back);
+  assert.equal(back.sessionId, created.sessionId);
+  assert.ok(Date.now() - started < 1_000, `resume took ${Date.now() - started}ms`);
+});
+
 test("a session paused mid-command fails fast instead of stalling until the command timeout", async () => {
   const watchful = createSdkManagedAgentsClient({
     apiToken: service.token,
