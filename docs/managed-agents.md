@@ -168,11 +168,14 @@ self-API for the connector SDK and file callbacks. A deployment behind
 `localhost` serves shell commands fine but cannot complete a cron, a send, or a
 credential fetch.
 
-**The bare base is smaller than agents assume.** It carries `bash`, `git`,
-`curl`, `tar`, `node`, `python3`, `make`, and `gcc`. It does not carry `jq`,
-`rg`, or `unzip`, all of which prompts reach for by name. The profile reports
-them as not installed so the model does not try; naming your own template in
-`DO_AGENTS_TEMPLATE` is how you add them.
+**Use the QM template.** The bare base `agent: none` boots is Ubuntu with Node 20,
+`bash`, `git`, `curl`, `tar`, `python3`, `make`, and `gcc`, but no `jq`, `rg`, `unzip`, or
+`wget`, and it leaves `HOME` at `/root` instead of the home the adapter manages. Register
+`deploy/do-managed-agents/Dockerfile` as a team template and name it in
+`DO_AGENTS_TEMPLATE`; it is the same Node 24 image as the E2B template plus `ripgrep`,
+with `HOME` set to `/workspace/home`. When `DO_AGENTS_TEMPLATE` is set the profile
+advertises `jq`, `rg`, `unzip`, and `wget` as installed, so a custom template should
+carry them too. See [Build the QM template](#build-the-qm-template).
 
 **Set `DO_AGENTS_SNAPSHOT_S3_BUCKET`.** It is how a scope's home survives losing its
 session. Managed Agents exposes session checkpoints, but QM does not use them yet, so
@@ -206,7 +209,7 @@ for session records and provisioning locks across instances.
 | --------------------------------- | ------------------------------ | ----------------------------------------------------------------- |
 | `DO_AGENTS_API_TOKEN`             | Required                       | DigitalOcean IAM token, held by core.                             |
 | `DO_AGENTS_API_BASE_URL`          | `https://api.digitalocean.com` | Control-plane endpoint override; any path prefix is preserved.    |
-| `DO_AGENTS_TEMPLATE`              | Provider bare base             | Template override; unset means the bare base `agent: none` picks. |
+| `DO_AGENTS_TEMPLATE`              | Provider bare base             | Team template to boot. Unset boots the bare base; use QM template |
 | `DO_AGENTS_NAME_PREFIX`           | `qm`                           | Namespace for scope discovery.                                    |
 | `DO_AGENTS_SIZE_SLUG`             | Provider default               | microVM size.                                                     |
 | `DO_AGENTS_IDLE_TIMEOUT_SEC`      | Provider default               | Provider-side idle reclaim backstop.                              |
@@ -253,3 +256,24 @@ the reply carries output that could only have come from the guest.
 DO_AGENTS_API_TOKEN=dop_v1_... npm run smoke:managed-agents-sandbox
 CORE_SIGNING_SECRET=... PORTAL_IDENTITY_SECRET=... npm run smoke:managed-agents-turn
 ```
+
+## Build the QM template
+
+Managed Agents builds a team template from an image in your DigitalOcean Container
+Registry, rebased onto a platform base. QM uses the `sandbox` base, which carries no
+agent. With Docker and an authenticated `doctl`:
+
+```sh
+REG=registry.digitalocean.com/<your-registry>
+docker build --platform linux/amd64 -t $REG/qm-sandbox:v1 deploy/do-managed-agents
+doctl registry login && docker push $REG/qm-sandbox:v1
+doctl harness-runtime template create --name qm-sandbox --base-template sandbox \
+  --source-oci-ref $REG/qm-sandbox:v1
+doctl harness-runtime template list-builds qm-sandbox   # wait for SUCCEEDED
+```
+
+Then set `DO_AGENTS_TEMPLATE=qm-sandbox`. To ship an image change, push a new tag and run
+`doctl harness-runtime template update qm-sandbox --source-oci-ref $REG/qm-sandbox:v2`.
+Templates do not pick up platform fixes on their own, so rebuild after Managed Agents
+updates as well. Existing sessions keep the template they were created from; a scope only
+boots the new one after its session is destroyed.

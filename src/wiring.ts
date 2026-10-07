@@ -230,7 +230,11 @@ import {
 import { createSdkSuperserveClient } from "./sandbox/superserve-client.ts";
 import { createE2bSandbox, type StoredE2bSandbox } from "./sandbox/e2b-sandbox.ts";
 import { createSdkE2bClient } from "./sandbox/e2b-client.ts";
-import { createManagedAgentsSandbox, type StoredManagedAgentsSandbox } from "./sandbox/managed-agents-sandbox.ts";
+import {
+  createManagedAgentsSandbox,
+  QM_TEMPLATE_TOOLS,
+  type StoredManagedAgentsSandbox,
+} from "./sandbox/managed-agents-sandbox.ts";
 import { createSdkManagedAgentsClient } from "./sandbox/managed-agents-client.ts";
 import { createS3SnapshotStore } from "./sandbox/home-snapshot.ts";
 import { createModalSandbox, type StoredModalSandbox } from "./sandbox/modal-sandbox.ts";
@@ -953,7 +957,7 @@ export function buildApp(
         ? { snapshotIntervalMs: managedAgents.snapshotIntervalSec * 1000 }
         : {}),
       ...(managedAgents.egressProxyUrl ? { egressProxyUrl: managedAgents.egressProxyUrl } : {}),
-      extraTools: deploymentLayer.advertisedTools,
+      extraTools: [...(managedAgents.template ? QM_TEMPLATE_TOOLS : []), ...deploymentLayer.advertisedTools],
       credentialPaths: deploymentLayer.credentialPaths,
       layerToolFiles: () => deploymentLayer.installFiles,
       blobTransfer,

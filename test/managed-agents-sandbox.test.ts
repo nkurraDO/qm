@@ -4,7 +4,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pollProcess } from "../src/sandbox/process-poll.ts";
-import { createManagedAgentsSandbox, type StoredManagedAgentsSandbox } from "../src/sandbox/managed-agents-sandbox.ts";
+import {
+  createManagedAgentsSandbox,
+  QM_TEMPLATE_TOOLS,
+  type StoredManagedAgentsSandbox,
+} from "../src/sandbox/managed-agents-sandbox.ts";
 import {
   managedAgentsEgressAllow,
   managedAgentsSessionState,
@@ -190,6 +194,15 @@ test("the profile advertises provider-managed persistence and parks on teardown"
   assert.equal(sandbox.profile.writablePersistence, "provider_managed");
   assert.equal(sandbox.profile.parksOnTeardown, true);
   assert.equal(supportsProcessSessions(sandbox), true);
+});
+
+test("the QM template's tools are advertised as installed, not missing", () => {
+  assert.ok(sandbox.profile.spec?.notInstalled?.includes("jq"));
+  const spec = make({ extraTools: QM_TEMPLATE_TOOLS }).profile.spec;
+  for (const tool of QM_TEMPLATE_TOOLS) {
+    assert.ok(spec?.tools?.includes(tool), tool);
+    assert.ok(!spec?.notInstalled?.includes(tool), tool);
+  }
 });
 
 test("egress enforcement is only claimed when a proxy is configured", () => {

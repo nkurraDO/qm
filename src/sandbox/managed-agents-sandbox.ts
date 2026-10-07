@@ -61,6 +61,8 @@ const HOME_TAR = `${HOME_DIR}/.qm-home.tar`;
 const SNAPSHOT_PRUNE = HOME_SNAPSHOT_PRUNE;
 const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60_000;
 
+export const QM_TEMPLATE_TOOLS = ["jq", "rg", "unzip", "wget"];
+
 export interface StoredManagedAgentsSandbox {
   sessionId: string;
   sandboxId: string;
