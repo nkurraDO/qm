@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { stagingApiHeaders } from "../src/deployment/postdeploy-smoke.ts";
 
 const core = process.env.CORE_URL ?? "http://localhost:8081";
-const principal = process.env.PRINCIPAL ?? "naveenkurra";
+const principal = process.env.PRINCIPAL ?? "managed-agents-smoke";
 const sourceSecret = process.env.CORE_SIGNING_SECRET ?? "";
 const portalSecret = process.env.PORTAL_IDENTITY_SECRET ?? "";
 
