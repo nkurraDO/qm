@@ -62,14 +62,20 @@ export interface AgentComputerSpec {
   workdir?: string;
 }
 
+export const DEFAULT_SCRATCH_DIR = "/tmp";
+
 export interface AgentComputerProfile {
   backend: string;
   writablePersistence: WritablePersistence;
   processSessions: boolean;
   parksOnTeardown?: boolean;
   egressEnforcement?: EgressEnforcement;
+  scratchDir?: string;
   spec?: AgentComputerSpec;
 }
+
+export const scratchDirFor = (profile: Pick<AgentComputerProfile, "scratchDir"> | undefined): string =>
+  profile?.scratchDir ?? DEFAULT_SCRATCH_DIR;
 
 export function effectiveEgressEnforcement(
   profile: AgentComputerProfile,

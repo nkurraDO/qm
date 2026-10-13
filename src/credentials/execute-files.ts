@@ -1,4 +1,4 @@
-import type { Sandbox, SandboxHandle } from "../sandbox/sandbox.ts";
+import { scratchDirFor, type Sandbox, type SandboxHandle } from "../sandbox/sandbox.ts";
 import type { ProcessRegistry } from "../processes/process-registry.ts";
 import { parseTar } from "../sandbox/tar.ts";
 import { shq } from "../util/shell.ts";
@@ -115,11 +115,13 @@ export async function prepareExecutionFiles(
   );
   if (files.some((file) => roots.filter((group) => belongsTo(file.path, group)).length !== 1))
     throw new Error("Requested credentials contain overlapping credential directories");
-  const prefix = "/tmp/qm-credentials.";
+  const scratch = scratchDirFor(sandbox.profile);
+  const basename = "qm-credentials.";
+  const prefix = `${scratch}/${basename}`;
   const created = await runOrThrow(
     sandbox,
     handle,
-    `find /tmp/ -maxdepth 1 -name ${shq(`${prefix.slice(5)}*`)} -mmin +120 -exec rm -rf -- {} + 2>/dev/null; umask 077; d=$(mktemp -d ${shq(`${prefix}XXXXXXXXXX`)}) && printf '%s\\n' "\${d##*.}"`,
+    `mkdir -p ${shq(scratch)} 2>/dev/null; find ${shq(`${scratch}/`)} -maxdepth 1 -name ${shq(`${basename}*`)} -mmin +120 -exec rm -rf -- {} + 2>/dev/null; umask 077; d=$(mktemp -d ${shq(`${prefix}XXXXXXXXXX`)}) && printf '%s\\n' "\${d##*.}"`,
     "Could not create command credential directory",
   );
   const suffix = created.stdout.trim();

@@ -9,6 +9,7 @@ import { CAPABILITY_HEADER } from "../api/contract.ts";
 
 import type { BlobTransferStore } from "../persistence/blob-transfer.ts";
 import {
+  DEFAULT_SCRATCH_DIR,
   hasParentPathSegment,
   type AgentComputerExportArea,
   type AgentComputerExportEntry,
@@ -158,6 +159,7 @@ export interface ExecExportDeps {
   exec: ExecFileOpsDeps["exec"];
   readAbsBytes(id: string, absPath: string): Promise<Uint8Array | null>;
   defaultHomeDir: string;
+  scratchDir?: string;
   ephemeralCredentialPrefixes: readonly string[];
 }
 
@@ -170,6 +172,7 @@ export function createExecExport({
   exec,
   readAbsBytes,
   defaultHomeDir,
+  scratchDir = DEFAULT_SCRATCH_DIR,
   ephemeralCredentialPrefixes,
 }: ExecExportDeps): ExecExport {
   const rootForArea = (handle: SandboxHandle, area: AgentComputerExportArea): string =>
@@ -208,7 +211,11 @@ export function createExecExport({
               "-path '*/.cache'",
               "-path '*/.cache/*'",
             ];
-        const made = await exec(handle.id, `mktemp /tmp/agent-computer-export.XXXXXX`, 60);
+        const made = await exec(
+          handle.id,
+          `mkdir -p ${shq(scratchDir)} 2>/dev/null; mktemp ${shq(`${scratchDir}/agent-computer-export.XXXXXX`)}`,
+          60,
+        );
         if (made.code !== 0) throw new Error(`${label} export ${area} mktemp failed: ${made.stderr}`);
         const tmp = made.stdout.trim();
         try {

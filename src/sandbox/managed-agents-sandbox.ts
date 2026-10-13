@@ -25,7 +25,7 @@ import {
   type CredentialPathSpec,
 } from "../credentials/resident-paths.ts";
 import { killableScript, killScript } from "./exec-kill.ts";
-import { visibleNotInstalled, visibleTools } from "./sandbox.ts";
+import { hasParentPathSegment, visibleNotInstalled, visibleTools } from "./sandbox.ts";
 import { sandboxScopeName } from "./exec-sandbox-base.ts";
 import {
   ManagedAgentsCommandLostError,
@@ -52,7 +52,9 @@ import type {
   TeardownOptions,
 } from "./sandbox.ts";
 
-const HOME_DIR = "/workspace/home";
+const WORKSPACE_ROOT = "/workspace";
+const HOME_DIR = `${WORKSPACE_ROOT}/home`;
+const SCRATCH_DIR = `${WORKSPACE_ROOT}/.qm-scratch`;
 const WORKSPACE_BASENAME = "workspace";
 const RO_LAYERS_TAR = ".ro-layers.tar";
 const RO_LAYERS_MANIFEST = ".ro-layers.manifest";
@@ -63,6 +65,25 @@ const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60_000;
 const CHECKPOINT_LABEL = "qm teardown";
 
 export const QM_TEMPLATE_TOOLS = ["jq", "rg", "unzip", "wget"];
+
+export class ManagedAgentsOutsideWorkspaceError extends Error {
+  readonly path: string;
+  constructor(absPath: string) {
+    super(
+      `do-managed-agents transfers files only under ${WORKSPACE_ROOT}, so it cannot reach ${absPath}. ` +
+        `Temporary files this backend has to read back or write belong in ${SCRATCH_DIR}, which exec and transfer both see.`,
+    );
+    this.name = "ManagedAgentsOutsideWorkspaceError";
+    this.path = absPath;
+  }
+}
+
+export function transferPath(absPath: string): string {
+  if (!absPath.startsWith("/") || hasParentPathSegment(absPath)) throw new ManagedAgentsOutsideWorkspaceError(absPath);
+  if (absPath !== WORKSPACE_ROOT && !absPath.startsWith(`${WORKSPACE_ROOT}/`))
+    throw new ManagedAgentsOutsideWorkspaceError(absPath);
+  return absPath;
+}
 
 export interface StoredManagedAgentsSandbox {
   sessionId: string;
@@ -299,6 +320,7 @@ export function createManagedAgentsSandbox(workspace: WorkspaceStore, opts: Mana
     processSessions: true,
     parksOnTeardown: true,
     egressEnforcement: opts.egressProxyUrl ? "domain" : "none",
+    scratchDir: SCRATCH_DIR,
     spec: {
       os: "Linux — DigitalOcean Managed Agents Firecracker microVM (provider pause preserves state; publish durable work to git or Files)",
       runtimes: ["Node", "Python 3"],
@@ -325,9 +347,9 @@ export function createManagedAgentsSandbox(workspace: WorkspaceStore, opts: Mana
   const procSessions = createExecProcessSessions(procIo);
 
   const writeAbsBytes = (name: string, absPath: string, data: Uint8Array): Promise<void> =>
-    withSession(name, (session) => session.writeFileBytes(absPath, data));
+    withSession(name, (session) => session.writeFileBytes(transferPath(absPath), data));
   const readAbsBytes = (name: string, absPath: string): Promise<Uint8Array | null> =>
-    withSession(name, (session) => session.readFileBytes(absPath));
+    withSession(name, (session) => session.readFileBytes(transferPath(absPath)));
   const installLayerTools = opts.layerToolFiles ? createLayerToolInstaller(opts.layerToolFiles) : null;
 
   const execFileOps = createExecFileOps({
@@ -341,6 +363,7 @@ export function createManagedAgentsSandbox(workspace: WorkspaceStore, opts: Mana
     exec: (id, script, t) => execRaw(id, script, t),
     readAbsBytes,
     defaultHomeDir: HOME_DIR,
+    scratchDir: SCRATCH_DIR,
     ephemeralCredentialPrefixes: ephemeralCredLinkPaths(opts.credentialPaths ?? []).map(({ rel }) => rel),
   });
 
