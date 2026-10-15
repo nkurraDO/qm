@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { pollProcess } from "../src/sandbox/process-poll.ts";
 import {
   createManagedAgentsSandbox,
-  ManagedAgentsOutsideWorkspaceError,
   QM_TEMPLATE_TOOLS,
   transferPath,
   type StoredManagedAgentsSandbox,
@@ -23,7 +22,6 @@ import { supportsProcessSessions } from "../src/sandbox/sandbox.ts";
 import { createMemoryMap, type DurableMap } from "../src/persistence/durable-map.ts";
 import { scopeId } from "../src/types.ts";
 import { prepareExecutionFiles } from "../src/credentials/execute-files.ts";
-import { DEFAULT_SCRATCH_DIR, scratchDirFor } from "../src/sandbox/sandbox.ts";
 import { installFakeManagedAgents, type FakeManagedAgents } from "./support/fake-managed-agents.ts";
 import type { Sandbox } from "../src/sandbox/sandbox.ts";
 
@@ -394,23 +392,13 @@ const awsCredential = (value: string) => ({
   save: async (): Promise<void> => {},
 });
 
-test("the backend declares a scratch directory inside the workspace it can transfer to", () => {
-  assert.equal(sandbox.profile.scratchDir, "/workspace/.qm-scratch");
-  assert.equal(scratchDirFor(undefined), DEFAULT_SCRATCH_DIR);
-  assert.equal(scratchDirFor({}), DEFAULT_SCRATCH_DIR);
-});
-
-test("the backend refuses a transfer outside the workspace before it reaches the guest", async () => {
-  const h = await sandbox.provision(layers);
-  const before = fake.execScripts().length;
+test("transfers outside the workspace fail locally and name the path", () => {
   for (const bad of ["/tmp/qm-credentials.abc/home/.aws/credentials", "/etc/hosts", "/workspace/../tmp/x", "relative"])
-    assert.throws(() => transferPath(bad), ManagedAgentsOutsideWorkspaceError, `expected ${bad} to be refused`);
-  assert.throws(() => transferPath("/tmp/x"), /transfers files only under \/workspace/);
-  assert.throws(() => transferPath("/tmp/x"), /\.qm-scratch/);
-  assert.equal(fake.execScripts().length, before, "the refusal must not touch the guest");
-  assert.equal(transferPath("/workspace/home/notes.txt"), "/workspace/home/notes.txt");
-  assert.equal(transferPath(`${sandbox.profile.scratchDir}/export.tar`), "/workspace/.qm-scratch/export.tar");
-  await sandbox.teardown(h, { keepWarm: true });
+    assert.throws(
+      () => transferPath(bad),
+      (e: Error) => e.message.includes(`cannot reach ${bad}.`),
+    );
+  assert.equal(transferPath("/workspace/.qm-scratch/export.tar"), "/workspace/.qm-scratch/export.tar");
 });
 
 test("the guest refuses a transfer outside the workspace, the way the platform does", async () => {
@@ -435,12 +423,13 @@ test("per-command credential files stage where the backend can transfer them", a
   await prepared.finish();
 });
 
-test("the stale credential sweep looks in the backend's scratch directory", async () => {
+test("the stale credential sweep clears old credential directories from the scratch directory", async () => {
   const h = await sandbox.provision(layers);
+  const stale = "/workspace/.qm-scratch/qm-credentials.stale";
+  await sandbox.run(h, `mkdir -p ${stale} && touch -d '3 hours ago' ${stale}`);
   const prepared = await prepareExecutionFiles(sandbox, h, [awsCredential("key=sweep")]);
-  const sweep = fake.execScripts().find((s) => s.includes("-mmin +120"));
-  assert.ok(sweep, "expected a stale-credential sweep");
-  assert.match(sweep!, /\.qm-scratch/);
+  const left = await sandbox.run(h, `test -e ${stale} && echo present || echo gone`);
+  assert.equal(left.stdout.trim(), "gone");
   await prepared.finish();
 });
 

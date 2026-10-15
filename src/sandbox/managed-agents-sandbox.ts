@@ -25,7 +25,7 @@ import {
   type CredentialPathSpec,
 } from "../credentials/resident-paths.ts";
 import { killableScript, killScript } from "./exec-kill.ts";
-import { hasParentPathSegment, visibleNotInstalled, visibleTools } from "./sandbox.ts";
+import { hasParentPathSegment, scratchDirFor, visibleNotInstalled, visibleTools } from "./sandbox.ts";
 import { sandboxScopeName } from "./exec-sandbox-base.ts";
 import {
   ManagedAgentsCommandLostError,
@@ -66,22 +66,13 @@ const CHECKPOINT_LABEL = "qm teardown";
 
 export const QM_TEMPLATE_TOOLS = ["jq", "rg", "unzip", "wget"];
 
-export class ManagedAgentsOutsideWorkspaceError extends Error {
-  readonly path: string;
-  constructor(absPath: string) {
-    super(
+export function transferPath(absPath: string): string {
+  const inside = absPath === WORKSPACE_ROOT || absPath.startsWith(`${WORKSPACE_ROOT}/`);
+  if (!inside || hasParentPathSegment(absPath))
+    throw new Error(
       `do-managed-agents transfers files only under ${WORKSPACE_ROOT}, so it cannot reach ${absPath}. ` +
         `Temporary files this backend has to read back or write belong in ${SCRATCH_DIR}, which exec and transfer both see.`,
     );
-    this.name = "ManagedAgentsOutsideWorkspaceError";
-    this.path = absPath;
-  }
-}
-
-export function transferPath(absPath: string): string {
-  if (!absPath.startsWith("/") || hasParentPathSegment(absPath)) throw new ManagedAgentsOutsideWorkspaceError(absPath);
-  if (absPath !== WORKSPACE_ROOT && !absPath.startsWith(`${WORKSPACE_ROOT}/`))
-    throw new ManagedAgentsOutsideWorkspaceError(absPath);
   return absPath;
 }
 
@@ -363,7 +354,7 @@ export function createManagedAgentsSandbox(workspace: WorkspaceStore, opts: Mana
     exec: (id, script, t) => execRaw(id, script, t),
     readAbsBytes,
     defaultHomeDir: HOME_DIR,
-    scratchDir: SCRATCH_DIR,
+    scratchDir: scratchDirFor(profile),
     ephemeralCredentialPrefixes: ephemeralCredLinkPaths(opts.credentialPaths ?? []).map(({ rel }) => rel),
   });
 
